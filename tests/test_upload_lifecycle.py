@@ -1,4 +1,5 @@
 from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -53,7 +54,10 @@ def _headers_and_assignment(client):
     signed_up = client.post("/v1/auth/sign-up", json={
         "email": "upload@example.com", "password": "valid-password", "acceptedTerms": True,
     }).json()
-    headers = {"Authorization": f"Bearer {signed_up['session']['accessToken']}"}
+    messages = client.get("/v1/auth/development-outbox").json()["messages"]
+    url = next(message["activationUrl"] for message in reversed(messages) if message["recipient"] == "upload@example.com")
+    activated = client.get("/v1/auth/activate", params={"token": parse_qs(urlparse(url).query)["token"][0]}).json()
+    headers = {"Authorization": f"Bearer {activated['session']['accessToken']}"}
     client.post("/v1/challenges/generate", headers=headers, json={
         "prompt": "Explain a trade-off you made at work.", "preparationGuidance": "Use one example.",
         "targetSkills": ["structure"], "difficulty": 2, "targetDurationSeconds": 60,

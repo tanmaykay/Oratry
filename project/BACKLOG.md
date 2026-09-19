@@ -11,3 +11,5 @@
 | V1-007 | Retry, comparison, and progress | P0 | V1-006 | Owner: Backend + Frontend. User can retry, compare attempts honestly, and view skill evidence/progress. | TODO |
 | V1-008 | Retention, deletion, and observability | P0 | V1-004 | Owner: Integration. Configurable raw-audio deletion, deletion audit state, provider cost/latency, and operational failure signals are implemented. | READY |
 | V1-009 | Replace deprecated audio dependency | P1 | V1-005 | Owner: Speech. Deterministic WAV analysis runs without `audioop` on supported Python versions. | TODO |
+| V1-010 | Email activation and verified-account access | P0 | V1-001 | Owner: Database + Backend + Frontend. Signup creates a one-time expiring activation link; unverified accounts cannot authenticate; local development has a safe email outbox and production uses a configured provider abstraction. | IN_PROGRESS |
+| V1-011 | Server-backed profile, vocabulary, and progress surfaces | P1 | V1-003 | Owner: Backend + Frontend. Profile preferences, vocabulary CRUD, and empty/real progress states are authenticated, persisted, and do not present mock learning results as real. | IN_PROGRESS |

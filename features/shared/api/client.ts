@@ -1,7 +1,7 @@
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "/v1").replace(/\/$/, "");
 const sessionStorageKey = "oratry.session";
 
-export type ApiUser = { id: string; email: string; preferences: Record<string, unknown>; createdAt: string };
+export type ApiUser = { id: string; email: string; preferences: Record<string, unknown>; emailVerifiedAt: string | null; createdAt: string };
 export type ChallengeAssignment = {
   assignmentId: string;
   status: string;
@@ -14,10 +14,22 @@ export type AttemptSummary = { id: string; status: "uploading" | "queued" | "ana
 export type HomeResponse = { onboardingState: BaselineResponse["status"]; currentAssignment: ChallengeAssignment | null; inProgressAttempt: AttemptSummary | null; coachingFocus: null; recentProgress: { completedAttemptCount: number } };
 export type Session = { accessToken: string; tokenType: "bearer" };
 export type AuthResponse = { user: ApiUser; session: Session };
+export type SignUpResponse = { user: ApiUser; activationRequired: true; delivery: "email" | string };
+export type DevelopmentOutboxResponse = { messages: { recipient: string; activationUrl: string }[] };
 export type StoredSession = AuthResponse;
 export type UploadInstruction = { method: "PUT"; url: string; headers: Record<string, string>; objectKey: string; expiresAt: string };
 export type UploadAttempt = { id: string; status: "uploading" | "queued" | string; assignmentId: string; createdAt: string; upload: UploadInstruction };
 export type UploadCompleteResponse = { id: string; status: "queued" | string; queue: { durable: boolean; delivery: string } };
+export type ProgressAttempt = { id: string; status: string; assignmentId: string; createdAt: string; challenge: ChallengeAssignment["challenge"] };
+export type ProgressResponse = { attempts: ProgressAttempt[] };
+export type SkillState = { skill: string; estimatedLevel: number; confidence: number; modelVersion: string };
+export type SkillsResponse = { skills: SkillState[] };
+export type DictionaryMeaning = { partOfSpeech?: string | null; definitions?: string[]; examples?: string[]; synonyms?: string[]; antonyms?: string[] };
+export type DictionaryPayload = { term?: string; phonetic?: string | null; meanings?: DictionaryMeaning[]; examples?: string[]; synonyms?: string[]; antonyms?: string[] };
+export type DictionaryEntry = { language: string; term: string; payload: DictionaryPayload; source: string; fetchedAt: string; expiresAt: string | null };
+export type VocabularyItem = { id: string; word: string; practiceStatus: "new" | "learning" | "practicing" | "mastered" | string; dictionary: DictionaryEntry | null };
+export type VocabularyResponse = { items: VocabularyItem[] };
+export type DictionaryLookupResponse = { term: string; dictionary: DictionaryEntry | null };
 
 export class ApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) { super(message); this.name = "ApiError"; }
@@ -46,8 +58,11 @@ export function storeSession(value: StoredSession) { window.sessionStorage.setIt
 export function clearStoredSession() { if (typeof window !== "undefined") window.sessionStorage.removeItem(sessionStorageKey); }
 
 export const api = {
-  signUp: (email: string, password: string, acceptedTerms: boolean) => request<AuthResponse>("/auth/sign-up", { method: "POST", body: JSON.stringify({ email, password, acceptedTerms }) }),
+  signUp: (email: string, password: string, acceptedTerms: boolean) => request<SignUpResponse>("/auth/sign-up", { method: "POST", body: JSON.stringify({ email, password, acceptedTerms }) }),
   signIn: (email: string, password: string) => request<AuthResponse>("/auth/sign-in", { method: "POST", body: JSON.stringify({ email, password }) }),
+  activate: (token: string) => request<AuthResponse>(`/auth/activate?token=${encodeURIComponent(token)}`),
+  resendActivation: (email: string) => request<{ accepted: true }>("/auth/resend-activation", { method: "POST", body: JSON.stringify({ email }) }),
+  developmentOutbox: () => request<DevelopmentOutboxResponse>("/auth/development-outbox"),
   me: (token: string) => request<MeResponse>("/me", {}, token),
   updatePreferences: (token: string, preferences: Record<string, unknown>) => request<ApiUser>("/me", { method: "PATCH", body: JSON.stringify({ preferences }) }, token),
   startBaseline: (token: string) => request<BaselineResponse>("/baseline/start", { method: "POST" }, token),
@@ -63,4 +78,11 @@ export const api = {
   },
   completeUpload: (token: string, attempt: UploadAttempt, durationSeconds: number, contentType: string, byteSize: number) => request<UploadCompleteResponse>(`/attempts/${attempt.id}/upload-complete`, { method: "POST", body: JSON.stringify({ objectKey: attempt.upload.objectKey, durationSeconds, contentType, byteSize }) }, token),
   attempt: (token: string, attemptId: string) => request<{ id: string; status: string; assignmentId: string }>(`/attempts/${attemptId}`, {}, token),
+  progress: (token: string) => request<ProgressResponse>("/progress", {}, token),
+  skills: (token: string) => request<SkillsResponse>("/progress/skills", {}, token),
+  vocabulary: (token: string) => request<VocabularyResponse>("/vocabulary", {}, token),
+  lookupDictionary: (token: string, word: string) => request<DictionaryLookupResponse>(`/dictionary/${encodeURIComponent(word)}`, {}, token),
+  addVocabulary: (token: string, word: string, lookup = true) => request<VocabularyItem>("/vocabulary", { method: "POST", body: JSON.stringify({ word, lookup, language: "en" }) }, token),
+  updateVocabulary: (token: string, itemId: string, practiceStatus: VocabularyItem["practiceStatus"]) => request<VocabularyItem>(`/vocabulary/${encodeURIComponent(itemId)}`, { method: "PATCH", body: JSON.stringify({ practiceStatus }) }, token),
+  deleteVocabulary: async (token: string, itemId: string): Promise<void> => { await request<unknown>(`/vocabulary/${encodeURIComponent(itemId)}`, { method: "DELETE" }, token); },
 };

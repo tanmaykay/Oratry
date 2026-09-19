@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from urllib.parse import parse_qs, urlparse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.db import Base
@@ -34,7 +35,10 @@ def test_recording_to_completed_feedback_flow(tmp_path):
         with TestClient(app) as client:
             sign_up=client.post("/v1/auth/sign-up",json={"email":"speaker@example.com","password":"valid-password","acceptedTerms":True})
             assert sign_up.status_code==201
-            headers={"Authorization":"Bearer "+sign_up.json()["session"]["accessToken"]}
+            messages = client.get("/v1/auth/development-outbox").json()["messages"]
+            url = next(message["activationUrl"] for message in reversed(messages) if message["recipient"] == "speaker@example.com")
+            activated = client.get("/v1/auth/activate", params={"token": parse_qs(urlparse(url).query)["token"][0]}).json()
+            headers={"Authorization":"Bearer "+activated["session"]["accessToken"]}
             challenge=client.post("/v1/challenges/generate",headers=headers,json={"prompt":"Explain a decision you made and defend it.","preparationGuidance":"Use a clear beginning, middle, and end.","targetSkills":["structure","fluency"],"difficulty":2,"targetDurationSeconds":90}).json()
             recommended=client.get("/v1/challenges/recommended",headers=headers).json()
             assert recommended["challenge"]["id"]==challenge["id"]
@@ -61,7 +65,11 @@ def test_attempt_authorization_hides_other_users(tmp_path):
     app.dependency_overrides[get_object_storage]=lambda: FakeStorage()
     try:
         with TestClient(app) as client:
-            def token(email): return client.post("/v1/auth/sign-up",json={"email":email,"password":"valid-password","acceptedTerms":True}).json()["session"]["accessToken"]
+            def token(email):
+                client.post("/v1/auth/sign-up", json={"email": email, "password": "valid-password", "acceptedTerms": True})
+                messages = client.get("/v1/auth/development-outbox").json()["messages"]
+                url = next(message["activationUrl"] for message in reversed(messages) if message["recipient"] == email)
+                return client.get("/v1/auth/activate", params={"token": parse_qs(urlparse(url).query)["token"][0]}).json()["session"]["accessToken"]
             first={"Authorization":"Bearer "+token("one@example.com")}; second={"Authorization":"Bearer "+token("two@example.com")}
             challenge=client.post("/v1/challenges/generate",headers=first,json={"prompt":"Tell a story with a clear ending.","preparationGuidance":"Prepare.","targetSkills":["structure"],"difficulty":1,"targetDurationSeconds":60}).json()
             assignment=client.get("/v1/challenges/recommended",headers=first).json()["assignmentId"]; attempt=client.post(f"/v1/assignments/{assignment}/attempts",headers=first,json={"checksumSha256":"a"*64}).json()

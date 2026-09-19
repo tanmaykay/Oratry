@@ -1,8 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
+from urllib.parse import urlencode
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from app.core import DomainError
-from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, SkillEvidence as SkillEvidenceRecord, SkillState
+from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, DictionaryEntry, EmailVerificationChallenge, SkillEvidence as SkillEvidenceRecord, SkillState, User, VocabularyItem
+from app.email import EmailDeliveryError, EmailProvider
+from app.dictionary import DictionaryProvider, DictionaryProviderError
 from app.personalization.skill_engine import SkillEvidence, SkillStateProjection, update_skill_state
 from app.personalization.baseline_policy import baseline_assignments, baseline_progress, recommend_after_baseline
 from app.personalization.challenge_engine import ChallengeCandidate
@@ -66,6 +71,151 @@ def owned_attempt(db,user_id,attempt_id):
     item=db.scalar(select(Attempt).where(Attempt.id==attempt_id,Attempt.user_id==user_id))
     if not item: raise DomainError("not_found","Resource not found",404)
     return item
+
+
+class ActivationService:
+    """Durable one-time signup activation workflow.
+
+    The token exists only while the caller constructs the outbound email; the
+    database retains its SHA-256 digest as the verification evidence.
+    """
+
+    purpose = "signup_activation"
+
+    def __init__(self, db, provider: EmailProvider, *, activation_url_base: str,
+                 token_minutes: int, resend_min_seconds: int, resend_max_per_hour: int):
+        self.db = db
+        self.provider = provider
+        self.activation_url_base = activation_url_base
+        self.token_minutes = token_minutes
+        self.resend_min_seconds = resend_min_seconds
+        self.resend_max_per_hour = resend_max_per_hour
+
+    @staticmethod
+    def _digest(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _utc(value: datetime) -> datetime:
+        """SQLite omits timezone offsets despite timezone-aware model fields."""
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+    def _activation_url(self, token: str) -> str:
+        return f"{self.activation_url_base}?{urlencode({'token': token})}"
+
+    def issue(self, user: User, *, now: datetime | None = None) -> None:
+        now = now or datetime.now(timezone.utc)
+        # Signup passes a newly added user. Flush it first so the durable
+        # challenge always has a real foreign-key owner in the same transaction.
+        self.db.flush()
+        active = self.db.scalar(select(EmailVerificationChallenge).where(
+            EmailVerificationChallenge.user_id == user.id,
+            EmailVerificationChallenge.purpose == self.purpose,
+            EmailVerificationChallenge.consumed_at.is_(None),
+            EmailVerificationChallenge.invalidated_at.is_(None),
+        ).with_for_update())
+        if active:
+            active.invalidated_at = now
+            self.db.flush()
+        token = secrets.token_urlsafe(32)
+        challenge = EmailVerificationChallenge(
+            user_id=user.id,
+            purpose=self.purpose,
+            token_digest=self._digest(token),
+            expires_at=now + timedelta(minutes=self.token_minutes),
+        )
+        self.db.add(challenge)
+        self.db.flush()
+        # Send before committing. A provider failure rolls back the newly
+        # created user/challenge, avoiding an account that cannot be activated.
+        self.provider.send_signup_activation(recipient=user.email, activation_url=self._activation_url(token))
+
+    def may_resend(self, user_id: str, *, now: datetime | None = None) -> bool:
+        now = now or datetime.now(timezone.utc)
+        recent = list(self.db.scalars(select(EmailVerificationChallenge.created_at).where(
+            EmailVerificationChallenge.user_id == user_id,
+            EmailVerificationChallenge.purpose == self.purpose,
+            EmailVerificationChallenge.created_at >= now - timedelta(hours=1),
+        ).order_by(EmailVerificationChallenge.created_at.desc())))
+        if len(recent) >= self.resend_max_per_hour:
+            return False
+        if recent and self._utc(recent[0]) > now - timedelta(seconds=self.resend_min_seconds):
+            return False
+        return True
+
+    def consume(self, token: str, *, now: datetime | None = None) -> User | None:
+        now = now or datetime.now(timezone.utc)
+        challenge = self.db.scalar(select(EmailVerificationChallenge).where(
+            EmailVerificationChallenge.token_digest == self._digest(token),
+        ).with_for_update())
+        if not challenge or challenge.consumed_at or challenge.invalidated_at or self._utc(challenge.expires_at) <= now:
+            return None
+        user = self.db.get(User, challenge.user_id, with_for_update=True)
+        if not user:
+            return None
+        challenge.consumed_at = now
+        user.email_verified_at = user.email_verified_at or now
+        self.db.commit()
+        return user
+
+
+class DictionaryService:
+    """Cache shared lexical reference data without changing user-owned state."""
+
+    payload_version = "dictionary-entry-1"
+
+    def __init__(self, db, provider: DictionaryProvider, *, cache_hours: int):
+        self.db = db
+        self.provider = provider
+        self.cache_hours = cache_hours
+
+    @staticmethod
+    def normalize_term(term: str) -> str:
+        return " ".join(term.split()).casefold()
+
+    def lookup(self, term: str, *, language: str = "en", now: datetime | None = None) -> DictionaryEntry | None:
+        now = now or datetime.now(timezone.utc)
+        normalized = self.normalize_term(term)
+        entry = self.db.scalar(select(DictionaryEntry).where(
+            DictionaryEntry.language == language,
+            DictionaryEntry.normalized_term == normalized,
+        ))
+        if entry and (entry.expires_at is None or ActivationService._utc(entry.expires_at) > now):
+            return entry
+        try:
+            lookup = self.provider.lookup_english(normalized)
+        except DictionaryProviderError:
+            return entry
+        if lookup is None:
+            return entry
+        expires_at = now + timedelta(hours=self.cache_hours)
+        if entry is None:
+            entry = DictionaryEntry(
+                language=language,
+                normalized_term=normalized,
+                payload_version=self.payload_version,
+                payload=lookup.payload,
+                source=lookup.source,
+                source_metadata=lookup.source_metadata,
+                fetched_at=now,
+                expires_at=expires_at,
+            )
+            self.db.add(entry)
+        else:
+            entry.payload_version = self.payload_version
+            entry.payload = lookup.payload
+            entry.source = lookup.source
+            entry.source_metadata = lookup.source_metadata
+            entry.fetched_at = now
+            entry.expires_at = expires_at
+        self.db.flush()
+        return entry
+
+    def attach_to_vocabulary(self, item: VocabularyItem, *, lookup: bool, language: str = "en") -> None:
+        if lookup:
+            entry = self.lookup(item.word, language=language)
+            if entry:
+                item.dictionary_entry_id = entry.id
 
 
 class CurriculumService:

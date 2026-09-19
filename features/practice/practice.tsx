@@ -14,12 +14,12 @@ function assignmentTitle(assignment: ChallengeAssignment) { return assignment.re
 
 export function Practice({ go, assignment }: AssignmentProps) {
   if (!assignment) return <AssignmentUnavailable />; const challenge = assignment.challenge;
-  return <div className="page"><Eyebrow>Practice</Eyebrow><h1>Your next<br /><i>challenge.</i></h1><div className="challenge-list"><Card className="challenge"><div><span className="pill">{assignment.reason}</span><h2>{assignmentTitle(assignment)}</h2><p>{challenge.prompt}</p><span className="muted">{Math.round(challenge.targetDurationSeconds / 60)} min · {challenge.targetSkills.join(" + ")}</span></div><Button variant="secondary" onClick={() => go("briefing")}>View challenge</Button></Card></div></div>;
+  return <div className="page"><Eyebrow>Practice</Eyebrow><h1>Your next<br /><i>challenge.</i></h1><div className="challenge-list"><Card className="challenge"><div><span className="pill">{assignment.reason}</span><h2>{assignmentTitle(assignment)}</h2><p>{challenge.prompt}</p><span className="muted">{Math.round(challenge.targetDurationSeconds / 60)} min · Difficulty {challenge.difficulty}/5 · {challenge.targetSkills.join(" + ")}</span></div><Button variant="secondary" onClick={() => go("briefing")}>View challenge</Button></Card></div></div>;
 }
 
 export function Briefing({ go, assignment }: AssignmentProps) {
   if (!assignment) return <AssignmentUnavailable />; const challenge = assignment.challenge;
-  return <div className="page briefing narrow"><button className="back" onClick={() => go("home")}>← Home</button><Eyebrow>{assignmentTitle(assignment)} · version {challenge.version}</Eyebrow><h1>Make your case</h1><p className="prompt">{challenge.prompt}</p><div className="meta-row"><div><span>Target duration</span><strong>{Math.round(challenge.targetDurationSeconds / 60)} minutes</strong></div><div><span>Skills</span><strong>{challenge.targetSkills.join(" · ")}</strong></div></div><Button onClick={() => go("prepare")}>Prepare to speak <span>→</span></Button></div>;
+  return <div className="page briefing narrow"><button className="back" onClick={() => go("home")}>← Home</button><Eyebrow>{assignmentTitle(assignment)} · version {challenge.version}</Eyebrow><h1>Make your case</h1><p className="prompt">{challenge.prompt}</p><div className="meta-row"><div><span>Target duration</span><strong>{Math.round(challenge.targetDurationSeconds / 60)} minutes</strong></div><div><span>Difficulty</span><strong>{challenge.difficulty} / 5</strong></div><div><span>Skills</span><strong>{challenge.targetSkills.join(" · ")}</strong></div></div><Button onClick={() => go("prepare")}>Prepare to speak <span>→</span></Button></div>;
 }
 
 export function Preparation({ go, assignment }: AssignmentProps) {

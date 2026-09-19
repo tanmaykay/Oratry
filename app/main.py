@@ -9,9 +9,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core import DomainError, configure_logging, create_token, decode_token, domain_error_handler, http_error_handler, password_hash, settings
 from app.db import get_db
-from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, Recording, SkillState, User, VocabularyItem
-from app.schemas import ChallengeCreate, CreateAttempt, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate
-from app.services import CurriculumService, job_queue, owned_attempt, process_job
+from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, DictionaryEntry, Recording, SkillState, User, VocabularyItem
+from app.schemas import ActivationResend, ChallengeCreate, CreateAttempt, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate, VocabularyUpdate
+from app.services import ActivationService, CurriculumService, DictionaryService, job_queue, owned_attempt, process_job
+from app.email import DevelopmentOutboxEmailProvider, DisabledEmailProvider, EmailDeliveryError, EmailProvider, ResendEmailProvider
+from app.dictionary import DatamuseDictionaryProvider, DictionaryProvider, DisabledDictionaryProvider, FreeDictionaryApiProvider, ResilientDictionaryProvider
 from app.storage import ObjectStorageProvider, R2ObjectStorageProvider
 
 configure_logging(); log=logging.getLogger("oratry.api")
@@ -19,6 +21,45 @@ app=FastAPI(title="Oratry API",version="1.0")
 app.add_exception_handler(DomainError,domain_error_handler); from fastapi import HTTPException; app.add_exception_handler(HTTPException,http_error_handler)
 bearer=HTTPBearer()
 SUPPORTED_AUDIO_CONTENT_TYPES = {"audio/webm", "audio/mpeg", "audio/wav", "audio/mp4"}
+
+
+@lru_cache
+def get_email_provider() -> EmailProvider:
+    """Compose email transport at the edge; unknown providers never downgrade."""
+    provider = settings.email_provider.casefold()
+    if provider == "development_outbox" and settings.app_environment.casefold() in {"local", "test"}:
+        return DevelopmentOutboxEmailProvider()
+    if provider == "resend":
+        if not settings.resend_api_key or not settings.resend_from_address:
+            raise DomainError("email_not_configured", "Account activation email is not configured", 503)
+        return ResendEmailProvider(api_key=settings.resend_api_key, from_address=settings.resend_from_address)
+    if provider == "disabled":
+        return DisabledEmailProvider()
+    raise DomainError("email_not_configured", "Account activation email is not configured", 503)
+
+
+def activation_service(db: Session, provider: EmailProvider) -> ActivationService:
+    return ActivationService(
+        db, provider,
+        activation_url_base=settings.activation_url_base,
+        token_minutes=settings.activation_token_minutes,
+        resend_min_seconds=settings.activation_resend_min_seconds,
+        resend_max_per_hour=settings.activation_resend_max_per_hour,
+    )
+
+
+@lru_cache
+def get_dictionary_provider() -> DictionaryProvider:
+    provider = settings.dictionary_provider.casefold()
+    if provider == "free_dictionary_api":
+        return ResilientDictionaryProvider(FreeDictionaryApiProvider(), DatamuseDictionaryProvider())
+    if provider == "disabled":
+        return DisabledDictionaryProvider()
+    raise DomainError("dictionary_not_configured", "Dictionary lookup is not configured", 503)
+
+
+def dictionary_service(db: Session, provider: DictionaryProvider) -> DictionaryService:
+    return DictionaryService(db, provider, cache_hours=settings.dictionary_cache_hours)
 
 
 @lru_cache
@@ -82,7 +123,7 @@ def current_user(credentials:HTTPAuthorizationCredentials=Depends(bearer),db:Ses
     user=db.get(User,str(decode_token(credentials.credentials)))
     if not user: raise DomainError("not_found","Resource not found",404)
     return user
-def user_view(user): return {"id":user.id,"email":user.email,"preferences":user.preferences,"createdAt":user.created_at}
+def user_view(user): return {"id":user.id,"email":user.email,"preferences":user.preferences,"emailVerifiedAt":user.email_verified_at,"createdAt":user.created_at}
 def challenge_view(challenge): return {"id":challenge.id,"version":challenge.version,"prompt":challenge.prompt,"preparationGuidance":challenge.preparation_guidance,"targetSkills":challenge.target_skills,"difficulty":challenge.difficulty,"targetDurationSeconds":challenge.target_duration_seconds}
 def assignment_view(assignment, db):
     return {"assignmentId":assignment.id,"status":assignment.status,"reason":assignment.reason,
@@ -91,17 +132,63 @@ def attempt_view(attempt,db):
     assignment=db.get(Assignment,attempt.assignment_id); return {"id":attempt.id,"status":attempt.status,"assignmentId":attempt.assignment_id,"createdAt":attempt.created_at,"challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
 @app.post("/v1/auth/sign-up",status_code=201)
 @app.post("/auth/signup",status_code=201,include_in_schema=False)
-def signup(body:SignUp,db:Session=Depends(get_db)):
+def signup(body:SignUp,db:Session=Depends(get_db),provider:EmailProvider=Depends(get_email_provider)):
     if not body.accepted_terms: raise DomainError("terms_required","Terms must be accepted")
     if db.scalar(select(User).where(User.email==str(body.email).lower())): raise DomainError("email_taken","An account already exists for this email",409)
-    user=User(email=str(body.email).lower(),password_hash=password_hash.hash(body.password),accepted_terms=True); db.add(user); db.commit(); db.refresh(user)
-    return {"user":user_view(user),"session":{"accessToken":create_token(UUID(user.id)),"tokenType":"bearer"}}
+    user=User(email=str(body.email).lower(),password_hash=password_hash.hash(body.password),accepted_terms=True)
+    db.add(user)
+    try:
+        activation_service(db, provider).issue(user)
+        db.commit()
+    except EmailDeliveryError as exc:
+        db.rollback()
+        raise DomainError("activation_email_unavailable", "Account activation is temporarily unavailable", 503) from exc
+    db.refresh(user)
+    return {"user":user_view(user),"activationRequired":True,"delivery":"email"}
 @app.post("/v1/auth/sign-in")
 @app.post("/auth/login",include_in_schema=False)
 def login(body:SignIn,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==str(body.email).lower()))
     if not user or not password_hash.verify(body.password,user.password_hash): raise DomainError("invalid_credentials","Invalid email or password",401)
+    if user.email_verified_at is None:
+        raise DomainError("email_verification_required", "Activate your account from the link sent to your email", 403)
     return {"user":user_view(user),"session":{"accessToken":create_token(UUID(user.id)),"tokenType":"bearer"}}
+
+
+@app.get("/v1/auth/activate")
+def activate_account(token: str, db: Session = Depends(get_db)):
+    user = activation_service(db, get_email_provider()).consume(token)
+    if user is None:
+        raise DomainError("activation_link_invalid", "This activation link is invalid or expired", 400)
+    return {"user": user_view(user), "session": {"accessToken": create_token(UUID(user.id)), "tokenType": "bearer"}}
+
+
+@app.post("/v1/auth/resend-activation", status_code=202)
+def resend_activation(body: ActivationResend, db: Session = Depends(get_db), provider: EmailProvider = Depends(get_email_provider)):
+    """Non-enumerating resend endpoint; throttled and unknown emails look alike."""
+    user = db.scalar(select(User).where(User.email == str(body.email).lower()))
+    if user and user.email_verified_at is None:
+        service = activation_service(db, provider)
+        if service.may_resend(user.id):
+            try:
+                service.issue(user)
+                db.commit()
+            except EmailDeliveryError:
+                db.rollback()
+                # Retain the generic public response: callers cannot use this
+                # route to distinguish an address or infer provider state.
+    return {"accepted": True}
+
+
+@app.get("/v1/auth/development-outbox", include_in_schema=False)
+def development_outbox():
+    """Local-preview only: activation links stay in volatile process memory."""
+    if settings.app_environment.casefold() not in {"local", "test"}:
+        raise DomainError("not_found", "Resource not found", 404)
+    provider = get_email_provider()
+    if not isinstance(provider, DevelopmentOutboxEmailProvider):
+        raise DomainError("not_found", "Resource not found", 404)
+    return {"messages": [{"recipient": item.recipient, "activationUrl": item.activation_url} for item in provider.messages]}
 @app.get("/v1/me")
 @app.get("/me",include_in_schema=False)
 def me(user:User=Depends(current_user),db:Session=Depends(get_db)):
@@ -319,18 +406,66 @@ def progress(user:User=Depends(current_user),db:Session=Depends(get_db)): return
 @app.get("/v1/progress/skills")
 @app.get("/progress/skills",include_in_schema=False)
 def skills(user:User=Depends(current_user),db:Session=Depends(get_db)): return {"skills":[{"skill":s.skill,"estimatedLevel":s.estimated_level,"confidence":s.confidence,"modelVersion":s.model_version} for s in db.scalars(select(SkillState).where(SkillState.user_id==user.id))]}
+def dictionary_entry_view(entry: DictionaryEntry | None) -> dict | None:
+    if not entry:
+        return None
+    return {"language": entry.language, "term": entry.normalized_term, "payload": entry.payload,
+            "source": entry.source, "fetchedAt": entry.fetched_at, "expiresAt": entry.expires_at}
+
+
+def vocabulary_view(item: VocabularyItem, db: Session) -> dict:
+    return {"id": item.id, "word": item.word, "practiceStatus": item.practice_status,
+            "dictionary": dictionary_entry_view(db.get(DictionaryEntry, item.dictionary_entry_id) if item.dictionary_entry_id else None)}
+
+
+@app.get("/v1/dictionary/{term}")
+def dictionary_lookup(term: str, user: User = Depends(current_user), db: Session = Depends(get_db), provider: DictionaryProvider = Depends(get_dictionary_provider)):
+    normalized = DictionaryService.normalize_term(term)
+    if not normalized or len(normalized) > 200:
+        raise DomainError("invalid_dictionary_term", "Dictionary term must be between 1 and 200 characters", 422)
+    entry = dictionary_service(db, provider).lookup(normalized)
+    db.commit()
+    return {"term": normalized, "dictionary": dictionary_entry_view(entry)}
+
+
 @app.get("/v1/vocabulary")
 @app.get("/vocabulary",include_in_schema=False)
-def vocabulary(user:User=Depends(current_user),db:Session=Depends(get_db)): return {"items":[{"id":v.id,"word":v.word,"practiceStatus":v.practice_status} for v in db.scalars(select(VocabularyItem).where(VocabularyItem.user_id==user.id))]}
+def vocabulary(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    return {"items":[vocabulary_view(item, db) for item in db.scalars(select(VocabularyItem).where(VocabularyItem.user_id==user.id).order_by(VocabularyItem.word))]}
+
+
 @app.post("/v1/vocabulary",status_code=201)
-def add_vocabulary(body:VocabularyCreate,user:User=Depends(current_user),db:Session=Depends(get_db)): v=VocabularyItem(user_id=user.id,word=body.word.strip()); db.add(v); db.commit(); return {"id":v.id,"word":v.word,"practiceStatus":v.practice_status}
-@app.get("/v1/vocabulary/{word}")
-def get_word(word:str,user:User=Depends(current_user),db:Session=Depends(get_db)): 
-    v=db.scalar(select(VocabularyItem).where(VocabularyItem.user_id==user.id,VocabularyItem.word==word));
-    if not v: raise DomainError("not_found","Resource not found",404)
-    return {"id":v.id,"word":v.word,"practiceStatus":v.practice_status}
-@app.post("/v1/vocabulary/{word}/practice")
-def practice_word(word:str,user:User=Depends(current_user),db:Session=Depends(get_db)):
-    v=db.scalar(select(VocabularyItem).where(VocabularyItem.user_id==user.id,VocabularyItem.word==word));
-    if not v: raise DomainError("not_found","Resource not found",404)
-    v.practice_status="practicing"; db.commit(); return {"id":v.id,"word":v.word,"practiceStatus":v.practice_status}
+def add_vocabulary(body:VocabularyCreate,user:User=Depends(current_user),db:Session=Depends(get_db),provider: DictionaryProvider = Depends(get_dictionary_provider)):
+    word = " ".join(body.word.split())
+    if not word:
+        raise DomainError("invalid_vocabulary_word", "Vocabulary word cannot be blank", 422)
+    item = VocabularyItem(user_id=user.id, word=word)
+    db.add(item)
+    db.flush()
+    dictionary_service(db, provider).attach_to_vocabulary(item, lookup=body.lookup, language=body.language)
+    db.commit()
+    return vocabulary_view(item, db)
+
+
+@app.get("/v1/vocabulary/{item_id}")
+def get_vocabulary_item(item_id: str, user:User=Depends(current_user),db:Session=Depends(get_db)):
+    item = db.scalar(select(VocabularyItem).where(VocabularyItem.id == item_id, VocabularyItem.user_id == user.id))
+    if not item: raise DomainError("not_found","Resource not found",404)
+    return vocabulary_view(item, db)
+
+
+@app.patch("/v1/vocabulary/{item_id}")
+def update_vocabulary_item(item_id: str, body: VocabularyUpdate, user:User=Depends(current_user),db:Session=Depends(get_db)):
+    item = db.scalar(select(VocabularyItem).where(VocabularyItem.id == item_id, VocabularyItem.user_id == user.id))
+    if not item: raise DomainError("not_found","Resource not found",404)
+    item.practice_status = body.practice_status
+    db.commit()
+    return vocabulary_view(item, db)
+
+
+@app.delete("/v1/vocabulary/{item_id}", status_code=204)
+def delete_vocabulary_item(item_id: str, user:User=Depends(current_user),db:Session=Depends(get_db)):
+    item = db.scalar(select(VocabularyItem).where(VocabularyItem.id == item_id, VocabularyItem.user_id == user.id))
+    if not item: raise DomainError("not_found","Resource not found",404)
+    db.delete(item)
+    db.commit()

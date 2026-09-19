@@ -34,6 +34,8 @@ W12 cross-workstream review gates each merge and W9/W11.
 | W10 | Integration | BLOCKED by W7 | retention worker, integration tests/ops docs | Configurable post-success deletion scheduling/retry and deletion audit state. |
 | W11 | Integration + Frontend | BLOCKED by W5/W7/W9 | assigned integration glue and result/progress UI | Polling, result display, retry comparison, and progress flow. |
 | W12 | Code review | ON_DEMAND | no implementation ownership | Architecture/security/contract review before merge and before W9/W11 integration. |
+| W14 | Database | IN_PROGRESS | `app/models.py`, `migrations/**`, schema tests | Email activation persistence: verified user state and one-time token lifecycle. |
+| W16 | Frontend | IN_PROGRESS | account surfaces, typed client, frontend tests/styles | Replace mock profile/vocabulary/progress surfaces with authenticated server data. |
 
 ## Parallel start set
 

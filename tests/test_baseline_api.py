@@ -1,4 +1,5 @@
 from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -49,7 +50,11 @@ def _headers(client, email="baseline@example.com"):
     response = client.post("/v1/auth/sign-up", json={
         "email": email, "password": "valid-password", "acceptedTerms": True,
     })
-    return {"Authorization": f"Bearer {response.json()['session']['accessToken']}"}
+    assert response.status_code == 201
+    messages = client.get("/v1/auth/development-outbox").json()["messages"]
+    url = next(message["activationUrl"] for message in reversed(messages) if message["recipient"] == email)
+    activated = client.get("/v1/auth/activate", params={"token": parse_qs(urlparse(url).query)["token"][0]})
+    return {"Authorization": f"Bearer {activated.json()['session']['accessToken']}"}
 
 
 def test_baseline_start_is_idempotent_and_current_assignment_is_ordered(tmp_path):

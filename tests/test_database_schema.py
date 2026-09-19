@@ -66,7 +66,8 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
     expected_tables = {
         "alembic_version", "analysis_results", "analysis_runs", "attempts",
         "challenge_assignments", "challenges", "recordings", "skill_evidence",
-        "skill_states", "users", "vocabulary_items",
+        "skill_states", "users", "vocabulary_items", "email_verification_challenges",
+        "dictionary_entries",
     }
     assert set(inspector.get_table_names(schema="public")) == expected_tables
 
@@ -79,6 +80,23 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
     user_columns = {column["name"]: column for column in inspector.get_columns("users")}
     assert user_columns["preferences"]["type"].__class__.__name__ == "JSON"
     assert user_columns["created_at"]["type"].timezone is True
+    assert user_columns["email_verified_at"]["type"].timezone is True
+    assert user_columns["email_verified_at"]["nullable"] is True
+
+    verification_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("email_verification_challenges")
+    }
+    assert {"purpose", "token_digest", "expires_at", "consumed_at", "invalidated_at", "created_at"} <= verification_columns.keys()
+    assert verification_columns["expires_at"]["type"].timezone is True
+    assert verification_columns["consumed_at"]["type"].timezone is True
+    verification_fks = inspector.get_foreign_keys("email_verification_challenges")
+    assert {(foreign_key["constrained_columns"][0], foreign_key["referred_table"]) for foreign_key in verification_fks} == {
+        ("user_id", "users")
+    }
+    verification_indexes = {index["name"]: index for index in inspector.get_indexes("email_verification_challenges")}
+    assert verification_indexes["uq_email_verification_challenges_active_user_purpose"]["unique"] is True
+    assert verification_indexes["ix_email_verification_challenges_expires_at"]["unique"] is False
 
     recording_foreign_keys = inspector.get_foreign_keys("recordings")
     assert {(foreign_key["constrained_columns"][0], foreign_key["referred_table"]) for foreign_key in recording_foreign_keys} == {
@@ -96,6 +114,25 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
     assert assignment_indexes["uq_challenge_assignments_baseline_user_challenge"]["unique"] is True
     assert {tuple(constraint["column_names"]) for constraint in inspector.get_unique_constraints("recordings")} >= {
         ("attempt_id",), ("object_key",)
+    }
+
+    dictionary_columns = {column["name"]: column for column in inspector.get_columns("dictionary_entries")}
+    assert {
+        "language", "normalized_term", "payload_version", "payload", "source",
+        "source_metadata", "fetched_at", "expires_at", "created_at", "updated_at",
+    } <= dictionary_columns.keys()
+    assert dictionary_columns["fetched_at"]["type"].timezone is True
+    assert dictionary_columns["expires_at"]["type"].timezone is True
+    dictionary_indexes = {index["name"]: index for index in inspector.get_indexes("dictionary_entries")}
+    assert dictionary_indexes["ix_dictionary_entries_expires_at"]["unique"] is False
+    assert ("language", "normalized_term") in {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("dictionary_entries")
+    }
+    vocabulary_foreign_keys = inspector.get_foreign_keys("vocabulary_items")
+    assert ("dictionary_entry_id", "dictionary_entries") in {
+        (foreign_key["constrained_columns"][0], foreign_key["referred_table"])
+        for foreign_key in vocabulary_foreign_keys
     }
 
 
@@ -117,6 +154,71 @@ def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_
             VALUES ('00000000-0000-0000-0000-000000000002', 1, 'Prompt', 'Guidance', '["fluency"]'::json,
                     1, 120, '1', true)
         """))
+        connection.execute(text("""
+            INSERT INTO dictionary_entries
+                (id, language, normalized_term, payload_version, payload, source, source_metadata,
+                 fetched_at, expires_at, created_at, updated_at)
+            VALUES ('00000000-0000-0000-0000-000000000017', 'en', 'articulate', 'dictionary-entry-1',
+                    CAST(:dictionary_payload AS JSON), 'fixture', CAST(:source_metadata AS JSON),
+                    :created_at, :retention_deadline, :created_at, :created_at)
+        """), {
+            "created_at": created_at,
+            "retention_deadline": retention_deadline,
+            "dictionary_payload": json.dumps({"definitions": ["express ideas clearly"]}),
+            "source_metadata": json.dumps({"license": "fixture"}),
+        })
+        connection.execute(text("""
+            INSERT INTO vocabulary_items (id, user_id, word, practice_status, dictionary_entry_id)
+            VALUES ('00000000-0000-0000-0000-000000000018',
+                    '00000000-0000-0000-0000-000000000001', 'Articulate', 'new',
+                    '00000000-0000-0000-0000-000000000017')
+        """))
+        dictionary_row = connection.execute(text("""
+            SELECT normalized_term, payload, source_metadata, expires_at
+            FROM dictionary_entries
+            WHERE id = '00000000-0000-0000-0000-000000000017'
+        """)).one()
+        assert dictionary_row.normalized_term == "articulate"
+        assert dictionary_row.payload == {"definitions": ["express ideas clearly"]}
+        assert dictionary_row.source_metadata == {"license": "fixture"}
+        assert dictionary_row.expires_at == retention_deadline
+        with pytest.raises(IntegrityError):
+            with connection.begin_nested():
+                connection.execute(text("""
+                    INSERT INTO dictionary_entries
+                        (id, language, normalized_term, payload_version, payload, source, source_metadata,
+                         fetched_at, created_at, updated_at)
+                    VALUES ('00000000-0000-0000-0000-000000000019', 'en', 'articulate', 'dictionary-entry-1',
+                            '{}'::json, 'fixture', '{}'::json, :created_at, :created_at, :created_at)
+                """), {"created_at": created_at})
+        connection.execute(text("""
+            INSERT INTO email_verification_challenges
+                (id, user_id, purpose, token_digest, expires_at, created_at)
+            VALUES ('00000000-0000-0000-0000-000000000014',
+                    '00000000-0000-0000-0000-000000000001', 'signup_activation',
+                    repeat('d', 64), :retention_deadline, :created_at)
+        """), {"created_at": created_at, "retention_deadline": retention_deadline})
+        with pytest.raises(IntegrityError):
+            with connection.begin_nested():
+                connection.execute(text("""
+                    INSERT INTO email_verification_challenges
+                        (id, user_id, purpose, token_digest, expires_at, created_at)
+                    VALUES ('00000000-0000-0000-0000-000000000015',
+                            '00000000-0000-0000-0000-000000000001', 'signup_activation',
+                            repeat('e', 64), :retention_deadline, :created_at)
+                """), {"created_at": created_at, "retention_deadline": retention_deadline})
+        connection.execute(text("""
+            UPDATE email_verification_challenges
+            SET invalidated_at = :created_at
+            WHERE id = '00000000-0000-0000-0000-000000000014'
+        """), {"created_at": created_at})
+        connection.execute(text("""
+            INSERT INTO email_verification_challenges
+                (id, user_id, purpose, token_digest, expires_at, created_at)
+            VALUES ('00000000-0000-0000-0000-000000000016',
+                    '00000000-0000-0000-0000-000000000001', 'signup_activation',
+                    repeat('f', 64), :retention_deadline, :created_at)
+        """), {"created_at": created_at, "retention_deadline": retention_deadline})
         connection.execute(text("""
             INSERT INTO challenge_assignments (id, user_id, challenge_id, reason, status, sequence, assigned_at)
             VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001',

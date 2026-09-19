@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 def now(): return datetime.now(timezone.utc)
@@ -8,7 +8,38 @@ def uid(): return str(uuid4())
 
 class User(Base):
     __tablename__="users"
-    id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); email: Mapped[str]=mapped_column(String(320),unique=True,index=True); password_hash: Mapped[str]=mapped_column(String(255)); accepted_terms: Mapped[bool]=mapped_column(Boolean); preferences: Mapped[dict]=mapped_column(JSON,default=dict); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+    id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); email: Mapped[str]=mapped_column(String(320),unique=True,index=True); password_hash: Mapped[str]=mapped_column(String(255)); accepted_terms: Mapped[bool]=mapped_column(Boolean); preferences: Mapped[dict]=mapped_column(JSON,default=dict); email_verified_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+
+
+class EmailVerificationChallenge(Base):
+    """One-time email activation evidence; the plaintext token is never persisted."""
+
+    __tablename__ = "email_verification_challenges"
+    __table_args__ = (
+        CheckConstraint("purpose = 'signup_activation'", name="ck_email_verification_challenges_purpose"),
+        CheckConstraint("length(token_digest) = 64", name="ck_email_verification_challenges_token_digest_length"),
+        CheckConstraint("expires_at > created_at", name="ck_email_verification_challenges_expiry_after_creation"),
+        UniqueConstraint("token_digest", name="uq_email_verification_challenges_token_digest"),
+        Index("ix_email_verification_challenges_user_id", "user_id"),
+        Index("ix_email_verification_challenges_expires_at", "expires_at"),
+        Index(
+            "uq_email_verification_challenges_active_user_purpose",
+            "user_id",
+            "purpose",
+            unique=True,
+            postgresql_where=text("consumed_at IS NULL AND invalidated_at IS NULL"),
+            sqlite_where=text("consumed_at IS NULL AND invalidated_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(40), nullable=False, default="signup_activation")
+    token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 class Challenge(Base):
     __tablename__="challenges"
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); version: Mapped[int]=mapped_column(Integer,default=1); prompt: Mapped[str]=mapped_column(Text); preparation_guidance: Mapped[str]=mapped_column(Text); target_skills: Mapped[list]=mapped_column(JSON); difficulty: Mapped[int]=mapped_column(Integer); target_duration_seconds: Mapped[int]=mapped_column(Integer); rubric_version: Mapped[str]=mapped_column(String(32),default="1"); active: Mapped[bool]=mapped_column(Boolean,default=True)
@@ -58,3 +89,39 @@ class SkillEvidence(Base):
 class VocabularyItem(Base):
     __tablename__="vocabulary_items"
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); user_id: Mapped[str]=mapped_column(ForeignKey("users.id"),index=True); word: Mapped[str]=mapped_column(String(200)); practice_status: Mapped[str]=mapped_column(String(30),default="new")
+    # A vocabulary item is always user-owned.  Its optional lookup reference is
+    # a shared, replaceable cache and must never be treated as learning state.
+    dictionary_entry_id: Mapped[str | None] = mapped_column(
+        ForeignKey("dictionary_entries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+
+class DictionaryEntry(Base):
+    """Provider-cached reference facts, keyed by language and normalized term.
+
+    ``payload`` is deliberately versioned rather than spread across columns so
+    providers can supply multiple definitions, pronunciations, examples and
+    lexical relations without making vendor response shapes part of the schema.
+    """
+
+    __tablename__ = "dictionary_entries"
+    __table_args__ = (
+        UniqueConstraint("language", "normalized_term", name="uq_dictionary_entries_language_normalized_term"),
+        CheckConstraint("length(trim(language)) > 0", name="ck_dictionary_entries_language_not_blank"),
+        CheckConstraint("length(trim(normalized_term)) > 0", name="ck_dictionary_entries_normalized_term_not_blank"),
+        CheckConstraint("length(trim(source)) > 0", name="ck_dictionary_entries_source_not_blank"),
+        CheckConstraint("expires_at IS NULL OR expires_at >= fetched_at", name="ck_dictionary_entries_expiry_after_fetch"),
+        Index("ix_dictionary_entries_expires_at", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    normalized_term: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_version: Mapped[str] = mapped_column(String(32), nullable=False, default="dictionary-entry-1")
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)

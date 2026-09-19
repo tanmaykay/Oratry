@@ -30,16 +30,35 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     evaluator_model: str = "gpt-5.6-luna"
     evaluator_reasoning_effort: str = "low"
+    email_provider: str = "development_outbox"
+    activation_url_base: str = "http://127.0.0.1:3000/activate"
+    activation_token_minutes: int = 60 * 24
+    activation_resend_min_seconds: int = 60
+    activation_resend_max_per_hour: int = 5
+    resend_api_key: str | None = None
+    resend_from_address: str | None = None
+    dictionary_provider: str = "free_dictionary_api"
+    dictionary_cache_hours: int = 24 * 7
 
     @model_validator(mode="after")
     def validate_deployment_settings(self):
         if self.recording_retention_hours <= 0:
             raise ValueError("RECORDING_RETENTION_HOURS must be greater than zero")
+        if self.activation_token_minutes <= 0:
+            raise ValueError("ACTIVATION_TOKEN_MINUTES must be greater than zero")
+        if self.activation_resend_min_seconds < 0 or self.activation_resend_max_per_hour <= 0:
+            raise ValueError("Activation resend limits must be positive")
+        if self.dictionary_cache_hours <= 0:
+            raise ValueError("DICTIONARY_CACHE_HOURS must be greater than zero")
         if self.app_environment.casefold() not in {"local", "test"}:
             if self.database_url.startswith("sqlite"):
                 raise ValueError("DATABASE_URL must use PostgreSQL outside local/test environments")
             if self.jwt_secret == "change-this-in-production-with-a-32-byte-secret" or len(self.jwt_secret) < 32:
                 raise ValueError("JWT_SECRET must be a unique value of at least 32 characters outside local/test environments")
+            if self.email_provider.casefold() == "development_outbox":
+                raise ValueError("EMAIL_PROVIDER=development_outbox is only allowed in local/test environments")
+            if self.email_provider.casefold() == "resend" and not (self.resend_api_key and self.resend_from_address):
+                raise ValueError("RESEND_API_KEY and RESEND_FROM_ADDRESS are required when EMAIL_PROVIDER=resend")
         return self
 settings = Settings()
 password_hash = PasswordHash.recommended()

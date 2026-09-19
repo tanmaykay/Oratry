@@ -10,7 +10,15 @@ from app.personalization.vocabulary_engine import VocabularyProgress, Vocabulary
 from app.personalization.baseline_policy import (
     BaselineIncompleteError, baseline_assignments, baseline_progress, recommend_after_baseline,
 )
-from app.personalization.catalog import BASELINE_CATALOG, PRACTICE_CATALOG
+from app.personalization.catalog import (
+    BASELINE_CATALOG,
+    CURRICULUM_CATALOG_VERSION,
+    FUTURE_CURRICULUM,
+    PRACTICE_CATALOG,
+    ChallengeMode,
+    TopicFamily,
+    future_challenges_for_mode,
+)
 
 
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
@@ -90,3 +98,19 @@ def test_identical_post_baseline_inputs_have_a_stable_recommendation():
     first = recommend_after_baseline(completed_baseline_challenge_ids=completed, skill_levels={}, now=NOW)
     second = recommend_after_baseline(completed_baseline_challenge_ids=completed, skill_levels={}, now=NOW)
     assert first == second
+
+
+def test_future_curriculum_is_versioned_complete_and_inactive_until_its_modes_exist():
+    assert CURRICULUM_CATALOG_VERSION == "2026-09-19.1"
+    assert {entry.mode for entry in FUTURE_CURRICULUM} == set(ChallengeMode)
+    assert {entry.topic_family for entry in FUTURE_CURRICULUM} == set(TopicFamily)
+    assert all(not entry.challenge.active for entry in FUTURE_CURRICULUM)
+    assert all(entry.preparation_seconds >= 0 for entry in FUTURE_CURRICULUM)
+    assert all(entry.vocabulary_targets == entry.challenge.vocabulary_ids for entry in FUTURE_CURRICULUM)
+
+
+def test_future_curriculum_keeps_mode_and_challenge_ids_stable_for_integration():
+    impromptu = future_challenges_for_mode(ChallengeMode.IMPROMPTU)
+    assert len(impromptu) == 1
+    assert impromptu[0].challenge.id == "impromptu-science-v1"
+    assert impromptu[0].preparation_seconds == 30
