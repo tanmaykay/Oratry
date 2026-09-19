@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Speech"
+  short_description: "Help with Oratry Speech tasks"
+policy:
+  allow_implicit_invocation: false

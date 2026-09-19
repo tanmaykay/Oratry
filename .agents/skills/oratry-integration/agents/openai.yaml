@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Integration"
+  short_description: "Help with Oratry Integration tasks"
+policy:
+  allow_implicit_invocation: false

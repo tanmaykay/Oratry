@@ -39,6 +39,14 @@ class TranscriptSegment:
 
 
 @dataclass(frozen=True)
+class TranscriptionUsage:
+    """Provider-normalized STT accounting evidence for one transcription request."""
+
+    provider_request_id: str | None = None
+    audio_duration_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class Transcript:
     text: str
     language: str | None
@@ -47,6 +55,7 @@ class Transcript:
     provider_model: str | None = None
     provider_version: str | None = None
     confidence: float | None = None
+    usage: TranscriptionUsage = field(default_factory=TranscriptionUsage)
 
     @property
     def words(self) -> tuple[WordTimestamp, ...]:

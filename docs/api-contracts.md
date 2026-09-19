@@ -1,10 +1,14 @@
 # Oratry V1 API Contracts
 
+## Contract status
+
+This is the target public API contract. The implemented FastAPI routes are a smaller demo subset; consult `project/CURRENT_STATE.md` before integrating against it. Route status is maintained by the Architect/Orchestrator, not by specialist workstreams.
+
 ## Conventions
 
 All endpoints are versioned under `/v1`, require an authenticated user session except signup/signin, and return JSON using `camelCase`. Timestamps are ISO-8601 UTC strings; IDs are opaque UUIDs. The API returns RFC 7807-style error objects with `code`, `message`, and optional `fieldErrors`. Authorization failure must not reveal whether another user's resource exists.
 
-Writes accept an `Idempotency-Key` header. The server returns the original successful result for repeated keys on the same authenticated route. Page lists use cursor pagination where applicable.
+Target writes accept an `Idempotency-Key` header and return the original successful result for repeated keys on the same authenticated route. Target page lists use cursor pagination where applicable.
 
 ## Auth and profile
 
@@ -34,14 +38,14 @@ Authentication implementation (hosted identity provider or first-party credentia
 
 | Method / path | Request | Success response |
 | --- | --- | --- |
-| `POST /v1/assignments/{assignmentId}/attempts` | optional `retryOfAttemptId` | attempt in `uploading` state and an `upload` instruction |
-| `POST /v1/attempts/{attemptId}/upload-complete` | `objectKey`, `checksum`, `durationSeconds`, `contentType` | attempt in `queued` state, `202` |
+| `POST /v1/assignments/{assignmentId}/attempts` | `contentType`, SHA-256 `checksumSha256`, optional `retryOfAttemptId` | attempt in `uploading` state and an `upload` instruction |
+| `POST /v1/attempts/{attemptId}/upload-complete` | `objectKey`, `durationSeconds`, `contentType`, `byteSize` | attempt in `queued` state, `202` |
 | `GET /v1/attempts/{attemptId}` | none | attempt summary, lifecycle status, challenge snapshot |
 | `GET /v1/attempts/{attemptId}/result` | none | completed analysis result; `409 analysis_not_complete` otherwise |
 | `GET /v1/attempts/{attemptId}/analysis-status` | none | status, stage, retry-safe user message, `updatedAt` |
 | `GET /v1/attempts/{attemptId}/comparison` | none | original/retry summaries when both are complete |
 
-`upload` is either `{ method, url, headers, objectKey, expiresAt }` for direct private object-store upload, or a documented multipart upload plan if recording size requires it. The browser may only upload the key returned by this call.
+`upload` is either `{ method, url, headers, objectKey, expiresAt }` for direct private object-store upload, or a documented multipart upload plan if recording size requires it. The browser computes `checksumSha256` over the finalized blob before requesting the instruction, then uses every returned upload header verbatim. The browser may only upload the key returned by this call. The server verifies content type, byte size, checksum observed from object storage, and caller-owned key before sealing the attempt. The current local queue response explicitly marks delivery as in-memory and non-durable; durable delivery is an integration requirement. Recording metadata stores a configurable retention deadline and deletion state (`not_scheduled`, `scheduled`, `deleting`, `deleted`, or `delete_failed`); recording bytes never receive permanent public URLs.
 
 `AttemptResultResponse` separates facts from interpretation:
 
@@ -81,3 +85,5 @@ Only workers can consume `attempt.analysis.requested` jobs. Minimum payload:
 ```
 
 Consumers acknowledge only after recording an idempotent stage transition. The queue may redeliver messages in any order; the application service checks legal state and already-completed stage outputs. No provider webhook is required in V1; if a selected provider is asynchronous, its adapter owns polling and normalizes the result before the next pipeline stage.
+
+Each analysis run records provider, operation, input/output units, estimated cost in USD, and latency in milliseconds. This operational data is not learner-facing scoring input.

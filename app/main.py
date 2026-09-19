@@ -1,31 +1,94 @@
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
 from uuid import UUID
-from fastapi import BackgroundTasks, Depends, FastAPI, Header
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.core import DomainError, configure_logging, create_token, decode_token, domain_error_handler, http_error_handler, password_hash
-from app.db import Base, engine, get_db
-from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, SkillState, User, VocabularyItem
-from app.schemas import ChallengeCreate, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate
-from app.services import job_queue, owned_attempt, process_job
+from app.core import DomainError, configure_logging, create_token, decode_token, domain_error_handler, http_error_handler, password_hash, settings
+from app.db import get_db
+from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, Recording, SkillState, User, VocabularyItem
+from app.schemas import ChallengeCreate, CreateAttempt, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate
+from app.services import CurriculumService, job_queue, owned_attempt, process_job
+from app.storage import ObjectStorageProvider, R2ObjectStorageProvider
 
 configure_logging(); log=logging.getLogger("oratry.api")
 app=FastAPI(title="Oratry API",version="1.0")
 app.add_exception_handler(DomainError,domain_error_handler); from fastapi import HTTPException; app.add_exception_handler(HTTPException,http_error_handler)
 bearer=HTTPBearer()
+SUPPORTED_AUDIO_CONTENT_TYPES = {"audio/webm", "audio/mpeg", "audio/wav", "audio/mp4"}
+
+
+@lru_cache
+def get_object_storage() -> ObjectStorageProvider:
+    """Compose the configured private object-storage adapter at the API edge."""
+    if settings.object_storage_provider != "r2":
+        raise DomainError("storage_not_configured", "Private recording storage is not configured", 503)
+    values = {
+        "endpoint_url": settings.r2_endpoint_url,
+        "bucket": settings.r2_bucket,
+        "access_key_id": settings.r2_access_key_id,
+        "secret_access_key": settings.r2_secret_access_key,
+    }
+    if not all(values.values()):
+        raise DomainError("storage_not_configured", "Private recording storage is not configured", 503)
+    return R2ObjectStorageProvider(**values) # type: ignore[arg-type]
+
+
+def _validate_audio_content_type(content_type: str) -> str:
+    normalized = content_type.lower().split(";", 1)[0].strip()
+    if normalized not in SUPPORTED_AUDIO_CONTENT_TYPES:
+        raise DomainError("unsupported_media", "Unsupported audio content type")
+    return normalized
+
+
+def _upload_view(instruction) -> dict:
+    expires_at = datetime.now(timezone.utc) + instruction.expires_in
+    return {
+        "method": instruction.method,
+        "url": instruction.url,
+        "objectKey": instruction.object_key,
+        "headers": instruction.headers,
+        "expiresAt": expires_at,
+    }
+
+
+def _issued_object_key(user_id: str, attempt_id: str) -> str:
+    return f"private/{user_id}/{attempt_id}/raw"
+
+
+def _create_upload_instruction(storage: ObjectStorageProvider, *, object_key: str, content_type: str, checksum_sha256: str):
+    try:
+        return storage.create_upload(
+            object_key=object_key, content_type=content_type,
+            max_bytes=settings.upload_max_bytes, checksum_sha256=checksum_sha256,
+        )
+    except Exception as exc:
+        log.warning("recording_upload_instruction_failed provider=%s", storage.provider_name)
+        raise DomainError("upload_unavailable", "Recording upload is temporarily unavailable", 503) from exc
+
+
+def _is_upload_completion_uniqueness_error(exc: IntegrityError) -> bool:
+    """Only replay a race on the rows sealed by upload completion itself."""
+    detail = str(exc.orig).lower()
+    return any(marker in detail for marker in (
+        "recordings.attempt_id", "recordings_attempt_id_key",
+        "analysis_runs.attempt_id, analysis_runs.version",
+        "analysis_runs_attempt_id_version_key",
+    ))
 def current_user(credentials:HTTPAuthorizationCredentials=Depends(bearer),db:Session=Depends(get_db)):
     user=db.get(User,str(decode_token(credentials.credentials)))
     if not user: raise DomainError("not_found","Resource not found",404)
     return user
 def user_view(user): return {"id":user.id,"email":user.email,"preferences":user.preferences,"createdAt":user.created_at}
 def challenge_view(challenge): return {"id":challenge.id,"version":challenge.version,"prompt":challenge.prompt,"preparationGuidance":challenge.preparation_guidance,"targetSkills":challenge.target_skills,"difficulty":challenge.difficulty,"targetDurationSeconds":challenge.target_duration_seconds}
+def assignment_view(assignment, db):
+    return {"assignmentId":assignment.id,"status":assignment.status,"reason":assignment.reason,
+            "challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
 def attempt_view(attempt,db):
     assignment=db.get(Assignment,attempt.assignment_id); return {"id":attempt.id,"status":attempt.status,"assignmentId":attempt.assignment_id,"createdAt":attempt.created_at,"challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
-@app.on_event("startup")
-def startup(): Base.metadata.create_all(engine)
-
 @app.post("/v1/auth/sign-up",status_code=201)
 @app.post("/auth/signup",status_code=201,include_in_schema=False)
 def signup(body:SignUp,db:Session=Depends(get_db)):
@@ -41,10 +104,59 @@ def login(body:SignIn,db:Session=Depends(get_db)):
     return {"user":user_view(user),"session":{"accessToken":create_token(UUID(user.id)),"tokenType":"bearer"}}
 @app.get("/v1/me")
 @app.get("/me",include_in_schema=False)
-def me(user:User=Depends(current_user)): return user_view(user)
+def me(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    curriculum=CurriculumService(db)
+    baseline_status, _, _=curriculum.baseline_status(user.id)
+    assignment=curriculum.current_assignment(user.id) if baseline_status != "not_started" else None
+    return {**user_view(user),"onboardingState":baseline_status,
+            "currentAssignment":assignment_view(assignment,db) if assignment else None}
 @app.patch("/v1/me")
 @app.patch("/me/preferences",include_in_schema=False)
 def patch_me(body:Preferences,user:User=Depends(current_user),db:Session=Depends(get_db)): user.preferences=body.preferences; db.commit(); return user_view(user)
+
+@app.post("/v1/baseline/start",status_code=201)
+def start_baseline(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    """Idempotently persist the V1 baseline sequence for the authenticated user."""
+    curriculum=CurriculumService(db)
+    assignments=curriculum.start_baseline(user.id)
+    status, _, current=curriculum.baseline_status(user.id)
+    return {"status":status,"assignments":[assignment_view(item,db) for item in assignments],
+            "currentAssignment":assignment_view(current,db) if current else None}
+
+@app.get("/v1/baseline")
+def get_baseline(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    curriculum=CurriculumService(db)
+    status, assignments, current=curriculum.baseline_status(user.id)
+    return {"status":status,"assignments":[assignment_view(item,db) for item in assignments],
+            "currentAssignment":assignment_view(current,db) if current else None}
+
+@app.get("/v1/assignments/current")
+def current_assignment(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    curriculum=CurriculumService(db)
+    status, _, _=curriculum.baseline_status(user.id)
+    if status == "not_started":
+        raise DomainError("baseline_not_started","Start the baseline before requesting an assignment",409)
+    assignment=curriculum.current_assignment(user.id)
+    if not assignment:
+        raise DomainError("no_assignment","No practice assignment is available",404)
+    return assignment_view(assignment,db)
+
+@app.get("/v1/home")
+def home(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    curriculum=CurriculumService(db)
+    baseline_status, _, _=curriculum.baseline_status(user.id)
+    assignment=curriculum.current_assignment(user.id) if baseline_status != "not_started" else None
+    in_progress=db.scalar(select(Attempt).where(
+        Attempt.user_id==user.id, Attempt.status.in_(("uploading","queued","analyzing","analysis_failed"))
+    ).order_by(Attempt.created_at.desc()))
+    completed_count=db.scalar(select(func.count(Attempt.id)).where(
+        Attempt.user_id==user.id, Attempt.status=="completed"
+    )) or 0
+    return {"onboardingState":baseline_status,
+            "currentAssignment":assignment_view(assignment,db) if assignment else None,
+            "inProgressAttempt":attempt_view(in_progress,db) if in_progress else None,
+            "coachingFocus":None,
+            "recentProgress":{"completedAttemptCount":completed_count}}
 
 @app.get("/v1/challenges/recommended")
 @app.get("/challenges/recommended",include_in_schema=False)
@@ -66,23 +178,117 @@ def get_challenge(challenge_id:str,user:User=Depends(current_user),db:Session=De
     return challenge_view(db.get(Challenge,challenge_id))
 
 @app.post("/v1/assignments/{assignment_id}/attempts",status_code=201)
-def create_attempt(assignment_id:str,user:User=Depends(current_user),db:Session=Depends(get_db)):
+def create_attempt(assignment_id:str, body:CreateAttempt|None=Body(default=None), user:User=Depends(current_user), db:Session=Depends(get_db), storage:ObjectStorageProvider=Depends(get_object_storage)):
     assignment=db.scalar(select(Assignment).where(Assignment.id==assignment_id,Assignment.user_id==user.id))
     if not assignment: raise DomainError("not_found","Resource not found",404)
-    attempt=Attempt(user_id=user.id,assignment_id=assignment.id); db.add(attempt); db.commit()
-    return {**attempt_view(attempt,db),"upload":{"method":"PUT","objectKey":f"private/{user.id}/{attempt.id}/raw","url":None,"headers":{}}}
+    if assignment.reason == "baseline":
+        current = CurriculumService(db).current_assignment(user.id)
+        if current is None or current.id != assignment.id:
+            raise DomainError(
+                "baseline_assignment_not_current",
+                "Complete the current baseline step before starting another one",
+                409,
+            )
+    if body is None:
+        raise DomainError("checksum_required", "A recording SHA-256 checksum is required before upload", 422)
+    request = body
+    content_type = _validate_audio_content_type(request.content_type)
+    if request.retry_of_attempt_id:
+        source = owned_attempt(db, user.id, request.retry_of_attempt_id)
+        if source.assignment_id != assignment.id or source.status != "completed":
+            raise DomainError("retry_not_available", "This retry source is not available", 409)
+    else:
+        # Repeated create requests before an upload is sealed resume the same
+        # attempt. This is intentionally narrower than header idempotency,
+        # which needs durable key storage in a later schema change.
+        attempt = db.scalar(select(Attempt).where(
+            Attempt.user_id == user.id, Attempt.assignment_id == assignment.id,
+            Attempt.status == "uploading", Attempt.retry_of_attempt_id.is_(None),
+        ).order_by(Attempt.created_at.desc()))
+        if attempt is not None:
+            if attempt.content_type and attempt.content_type != content_type:
+                raise DomainError("upload_media_type_locked", "This upload attempt was created for a different media type", 409)
+            if attempt.checksum != request.checksum_sha256:
+                raise DomainError("upload_checksum_locked", "This upload attempt was created for a different recording", 409)
+            instruction = _create_upload_instruction(
+                storage, object_key=_issued_object_key(user.id, attempt.id),
+                content_type=content_type, checksum_sha256=attempt.checksum,
+            )
+            return {**attempt_view(attempt,db),"upload":_upload_view(instruction)}
+    attempt=Attempt(user_id=user.id,assignment_id=assignment.id,content_type=content_type, checksum=request.checksum_sha256,
+                    retry_of_attempt_id=request.retry_of_attempt_id)
+    if request.retry_of_attempt_id:
+        source = owned_attempt(db, user.id, request.retry_of_attempt_id)
+        attempt.comparison_group_id = source.comparison_group_id
+        attempt.ordinal = source.ordinal + 1
+    db.add(attempt)
+    db.flush()
+    instruction = _create_upload_instruction(
+        storage, object_key=_issued_object_key(user.id, attempt.id),
+        content_type=content_type, checksum_sha256=request.checksum_sha256,
+    )
+    db.commit()
+    return {**attempt_view(attempt,db),"upload":_upload_view(instruction)}
 @app.post("/v1/sessions",status_code=201,include_in_schema=False)
-def create_session(assignment_id:str,user:User=Depends(current_user),db:Session=Depends(get_db)): return create_attempt(assignment_id,user,db)
+def create_session(assignment_id:str,body:CreateAttempt,user:User=Depends(current_user),db:Session=Depends(get_db),storage:ObjectStorageProvider=Depends(get_object_storage)): return create_attempt(assignment_id,body,user,db,storage)
 @app.post("/v1/attempts/{attempt_id}/upload-complete",status_code=202)
 @app.post("/sessions/{attempt_id}/upload",status_code=202,include_in_schema=False)
-def upload_complete(attempt_id:str,body:UploadComplete,user:User=Depends(current_user),db:Session=Depends(get_db)):
+def upload_complete(attempt_id:str,body:UploadComplete,user:User=Depends(current_user),db:Session=Depends(get_db),storage:ObjectStorageProvider=Depends(get_object_storage)):
     attempt=owned_attempt(db,user.id,attempt_id)
-    if attempt.status!="uploading": raise DomainError("invalid_state","This attempt cannot accept an upload",409)
-    if body.content_type not in {"audio/webm","audio/mpeg","audio/wav","audio/mp4"}: raise DomainError("unsupported_media","Unsupported audio content type")
-    expected=f"private/{user.id}/{attempt.id}/" 
-    if not body.object_key.startswith(expected): raise DomainError("invalid_upload","Upload key is not authorized",403)
-    attempt.object_key,attempt.checksum,attempt.duration_seconds,attempt.content_type=body.object_key,body.checksum,body.duration_seconds,body.content_type; attempt.status="queued"; attempt.sealed_at=datetime.now(timezone.utc); run=AnalysisRun(attempt_id=attempt.id,version=1); db.add(run); db.commit(); job_queue.enqueue_attempt_analysis(attempt.id)
-    return {"id":attempt.id,"status":"queued"}
+    expected = _issued_object_key(user.id, attempt.id)
+    content_type = _validate_audio_content_type(body.content_type)
+    if body.object_key != expected:
+        raise DomainError("invalid_upload", "Upload key is not authorized", 403)
+    if attempt.content_type != content_type:
+        raise DomainError("invalid_upload", "Upload media type does not match the issued instruction", 409)
+    if attempt.status != "uploading":
+        recording = db.scalar(select(Recording).where(Recording.attempt_id == attempt.id))
+        if attempt.status == "queued" and recording and (
+            recording.object_key == body.object_key and recording.content_type == content_type
+            and recording.byte_size == body.byte_size and recording.checksum_sha256 == attempt.checksum
+        ):
+            return {"id":attempt.id,"status":"queued","queue":{"durable":False,"delivery":"in_memory"}}
+        raise DomainError("invalid_state", "This attempt cannot accept an upload", 409)
+    try:
+        metadata = storage.head(body.object_key)
+    except Exception as exc:
+        log.info("recording_upload_verification_failed provider=%s", storage.provider_name)
+        raise DomainError("upload_verification_failed", "Uploaded recording could not be verified", 409) from exc
+    if metadata.object_key != expected or metadata.content_type.lower().split(";", 1)[0].strip() != content_type:
+        raise DomainError("upload_verification_failed", "Uploaded object metadata does not match the issued instruction", 409)
+    if metadata.byte_size != body.byte_size or metadata.byte_size > settings.upload_max_bytes:
+        raise DomainError("upload_verification_failed", "Uploaded object size could not be verified", 409)
+    if metadata.checksum_sha256 is None or metadata.checksum_sha256 != attempt.checksum:
+        raise DomainError("upload_verification_failed", "Uploaded object checksum could not be verified", 409)
+    attempt.object_key,attempt.duration_seconds,attempt.content_type=body.object_key,body.duration_seconds,content_type
+    attempt.status="queued"; attempt.sealed_at=datetime.now(timezone.utc)
+    db.add(Recording(attempt_id=attempt.id, storage_provider=storage.provider_name, object_key=body.object_key,
+                     content_type=content_type, byte_size=body.byte_size, checksum_sha256=attempt.checksum,
+                     retention_deadline=None, deletion_status="not_scheduled"))
+    db.add(AnalysisRun(attempt_id=attempt.id,version=1,status="queued",current_stage="queued"))
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Another request can seal the same upload while this transaction is
+        # verifying R2 metadata. Recover only the unique Recording/AnalysisRun
+        # completion race; all non-equivalent or unrelated integrity failures
+        # remain errors.
+        if not _is_upload_completion_uniqueness_error(exc):
+            raise
+        db.rollback()
+        sealed = owned_attempt(db, user.id, attempt_id)
+        recording = db.scalar(select(Recording).where(Recording.attempt_id == sealed.id))
+        run = db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id == sealed.id, AnalysisRun.version == 1))
+        if sealed.status == "queued" and recording and run and (
+            recording.object_key == body.object_key
+            and recording.content_type == content_type
+            and recording.byte_size == body.byte_size
+            and recording.checksum_sha256 == sealed.checksum
+        ):
+            return {"id": sealed.id, "status": "queued", "queue": {"durable": False, "delivery": "in_memory"}}
+        raise exc
+    job_queue.enqueue_attempt_analysis(attempt.id)
+    return {"id":attempt.id,"status":"queued","queue":{"durable":False,"delivery":"in_memory"}}
 def _run_job(attempt_id):
     from app.db import SessionLocal
     with SessionLocal() as db: process_job(db,attempt_id)

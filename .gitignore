@@ -12,3 +12,8 @@ wheels/
 # JavaScript-generated files
 node_modules/
 .next/
+tsconfig.tsbuildinfo
+
+# Local configuration and runtime data
+.env
+*.db

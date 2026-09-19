@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Learning"
+  short_description: "Help with Oratry Learning tasks"
+policy:
+  allow_implicit_invocation: false

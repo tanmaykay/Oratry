@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Database"
+  short_description: "Help with Oratry Database tasks"
+policy:
+  allow_implicit_invocation: false

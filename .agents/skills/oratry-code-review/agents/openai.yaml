@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Code Review"
+  short_description: "Help with Oratry Code Review tasks"
+policy:
+  allow_implicit_invocation: false

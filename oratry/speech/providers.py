@@ -8,6 +8,14 @@ from typing import Protocol, Sequence, runtime_checkable
 from .models import Metric, Transcript
 
 
+class SpeechToTextProviderError(RuntimeError):
+    """A transcription request failed and may be classified by its caller."""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
 @runtime_checkable
 class SpeechToTextProvider(Protocol):
     """Populate word timestamps/confidence whenever the provider supports them."""

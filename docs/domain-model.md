@@ -1,5 +1,7 @@
 # Oratry V1 Domain Model
 
+This is the target domain design. Its records and names do not imply that every entity is present in the active SQLAlchemy schema; current implementation facts are in `project/CURRENT_STATE.md`.
+
 ## Ownership and aggregate boundaries
 
 PostgreSQL is authoritative for product state. Object storage owns audio bytes and derived media only; Redis owns no durable business state. Provider outputs become durable only after validation and persistence in PostgreSQL.

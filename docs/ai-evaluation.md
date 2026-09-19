@@ -14,7 +14,7 @@ This follows the architecture's provider boundary: the LLM adapter returns canon
 
 ## Contract and controls
 
-`schemas/evaluation.py` exposes schema version `1.0.0`, a JSON Schema for structured-output provider APIs, exact evidence validation, and deterministic scoring. Provider configuration should use structured JSON/schema mode, temperature `0`, a pinned model snapshot, fixed system prompt, and a fixed maximum output token limit. Record provider, model identifier, prompt version, rubric version, metric calculation version, schema version, and scorer version on every `AnalysisRun`.
+`schemas/evaluation.py` exposes schema version `1.0.0`, a JSON Schema for structured-output provider APIs, exact evidence validation, and deterministic scoring. `oratry.evaluation.OpenAIEvaluator` requests strict JSON-schema output through the OpenAI Responses API, then validates it before it reaches business logic. It is configured with a fixed system prompt, low reasoning effort by default, and a maximum output-token limit. The default model is `gpt-5.6-luna`; `gpt-5.6-terra` is selected only through configuration. Its output includes provider/model, prompt SHA-256, schema/evaluation/rubric/prompt versions, request ID, input/output tokens, and latency for immutable analysis accounting.
 
 Validation should run after every provider response. On malformed JSON, unsupported version, unsupported metric/quote, bad offsets, wrong weighted total, or extra keys: save a redacted validation failure, retry at the evaluation stage under its idempotency key, then surface the normal safe analysis failure if retries are exhausted. Never silently substitute a result from a different prompt/model revision.
 

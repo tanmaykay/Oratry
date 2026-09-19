@@ -1,6 +1,6 @@
-# Oratry V1 web app
+# Oratry web client design
 
-The web client is a new Next.js/React/TypeScript application. It supplies the complete V1 product flow: landing and signup, onboarding/baseline, Home, challenge selection and briefing, preparation, minimal recording, analysis status, results, single-focus feedback, retry/comparison, Progress, Vocabulary, and Profile.
+The Next.js/React/TypeScript client currently supplies a clickable mock preview of the V1 product flow. It is not yet authenticated or connected to the FastAPI API; implementation reality is maintained in `project/CURRENT_STATE.md`.
 
 ## Design and behavior
 
@@ -11,7 +11,7 @@ The web client is a new Next.js/React/TypeScript application. It supplies the co
 
 ## Backend dependencies
 
-`features/shared/api/client.ts` is the sole API boundary. It is shaped around the documented `/v1` contracts and temporarily supplies fallback display data when the API is unavailable. Replace fallbacks as the endpoints are implemented:
+`features/shared/api/client.ts` is intended to be the sole browser API boundary. It currently supplies mock fallbacks and does not match the authenticated backend contract; replace it as the endpoints are implemented:
 
 - Auth/session: `/auth/sign-up`, `/auth/sign-in`, `/me`.
 - Baseline/current assignment/home: `/baseline`, `/assignments/current`, `/home`.

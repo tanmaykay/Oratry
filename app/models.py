@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 def now(): return datetime.now(timezone.utc)
@@ -14,10 +14,34 @@ class Challenge(Base):
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); version: Mapped[int]=mapped_column(Integer,default=1); prompt: Mapped[str]=mapped_column(Text); preparation_guidance: Mapped[str]=mapped_column(Text); target_skills: Mapped[list]=mapped_column(JSON); difficulty: Mapped[int]=mapped_column(Integer); target_duration_seconds: Mapped[int]=mapped_column(Integer); rubric_version: Mapped[str]=mapped_column(String(32),default="1"); active: Mapped[bool]=mapped_column(Boolean,default=True)
 class Assignment(Base):
     __tablename__="challenge_assignments"
+    __table_args__ = (
+        # The baseline policy assigns each fixed sequence and challenge once.
+        # Partial uniqueness leaves ordinary/recommended assignments unconstrained.
+        Index(
+            "uq_challenge_assignments_baseline_user_sequence",
+            "user_id",
+            "sequence",
+            unique=True,
+            postgresql_where=text("reason = 'baseline'"),
+            sqlite_where=text("reason = 'baseline'"),
+        ),
+        Index(
+            "uq_challenge_assignments_baseline_user_challenge",
+            "user_id",
+            "challenge_id",
+            unique=True,
+            postgresql_where=text("reason = 'baseline'"),
+            sqlite_where=text("reason = 'baseline'"),
+        ),
+    )
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); user_id: Mapped[str]=mapped_column(ForeignKey("users.id"),index=True); challenge_id: Mapped[str]=mapped_column(ForeignKey("challenges.id")); reason: Mapped[str]=mapped_column(String(80),default="recommended"); status: Mapped[str]=mapped_column(String(30),default="assigned"); sequence: Mapped[int]=mapped_column(Integer,default=1); assigned_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
 class Attempt(Base):
     __tablename__="attempts"
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); user_id: Mapped[str]=mapped_column(ForeignKey("users.id"),index=True); assignment_id: Mapped[str]=mapped_column(ForeignKey("challenge_assignments.id")); status: Mapped[str]=mapped_column(String(30),default="uploading"); comparison_group_id: Mapped[str]=mapped_column(String(36),default=uid); retry_of_attempt_id: Mapped[str|None]=mapped_column(ForeignKey("attempts.id"),nullable=True); ordinal: Mapped[int]=mapped_column(Integer,default=1); object_key: Mapped[str|None]=mapped_column(String(512),nullable=True); checksum: Mapped[str|None]=mapped_column(String(128),nullable=True); duration_seconds: Mapped[float|None]=mapped_column(Float,nullable=True); content_type: Mapped[str|None]=mapped_column(String(100),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now); sealed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); completed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+class Recording(Base):
+    """Raw-media metadata and its independently retryable retention lifecycle."""
+    __tablename__="recordings"
+    id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); attempt_id: Mapped[str]=mapped_column(ForeignKey("attempts.id"),unique=True); storage_provider: Mapped[str]=mapped_column(String(40)); object_key: Mapped[str]=mapped_column(String(512),unique=True); content_type: Mapped[str]=mapped_column(String(100)); byte_size: Mapped[int]=mapped_column(Integer); checksum_sha256: Mapped[str]=mapped_column(String(64)); retention_deadline: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True,index=True); deletion_status: Mapped[str]=mapped_column(String(30),default="not_scheduled"); deleted_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); deletion_error: Mapped[str|None]=mapped_column(String(200),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
 class AnalysisRun(Base):
     __tablename__="analysis_runs"; __table_args__=(UniqueConstraint("attempt_id","version"),)
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); attempt_id: Mapped[str]=mapped_column(ForeignKey("attempts.id"),index=True); version: Mapped[int]=mapped_column(Integer,default=1); status: Mapped[str]=mapped_column(String(30),default="queued"); current_stage: Mapped[str]=mapped_column(String(40),default="queued"); failure_code: Mapped[str|None]=mapped_column(String(80),nullable=True); updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)

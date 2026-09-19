@@ -5,16 +5,42 @@ import sys
 import jwt
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pwdlib import PasswordHash
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    app_environment: str = "local"
     database_url: str = "sqlite:///./oratry.db"
     jwt_secret: str = "change-this-in-production-with-a-32-byte-secret"
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 1440
     upload_max_bytes: int = 25 * 1024 * 1024
+    recording_retention_hours: int = 24
+    object_storage_provider: str = "local"
+    r2_endpoint_url: str | None = None
+    r2_bucket: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    stt_provider: str = "demo"
+    deepgram_api_key: str | None = None
+    deepgram_model: str = "nova-3"
+    llm_provider: str = "rules"
+    openai_api_key: str | None = None
+    evaluator_model: str = "gpt-5.6-luna"
+    evaluator_reasoning_effort: str = "low"
+
+    @model_validator(mode="after")
+    def validate_deployment_settings(self):
+        if self.recording_retention_hours <= 0:
+            raise ValueError("RECORDING_RETENTION_HOURS must be greater than zero")
+        if self.app_environment.casefold() not in {"local", "test"}:
+            if self.database_url.startswith("sqlite"):
+                raise ValueError("DATABASE_URL must use PostgreSQL outside local/test environments")
+            if self.jwt_secret == "change-this-in-production-with-a-32-byte-secret" or len(self.jwt_secret) < 32:
+                raise ValueError("JWT_SECRET must be a unique value of at least 32 characters outside local/test environments")
+        return self
 settings = Settings()
 password_hash = PasswordHash.recommended()
 

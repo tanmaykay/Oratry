@@ -1,12 +1,11 @@
-# Database schema
+# PostgreSQL target-schema reference
 
-Apply the schema and development examples with PostgreSQL 17 (PostgreSQL 14+ is sufficient):
+These SQL files are reference artifacts for the fuller target schema. The active runtime migration path is Alembic under `migrations/`; do not apply both systems to one database. Current implementation status is in `project/CURRENT_STATE.md`.
 
-```powershell
-psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f db/migrations/0001_v1_schema.sql
-psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f db/migrations/0002_attempt_integrity.sql
-psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f db/seeds/001_v1_example.sql
-```
+Do not execute these files against an Oratry runtime database. Use the active
+Alembic workflow in [docs/postgresql-development.md](../docs/postgresql-development.md)
+for local or managed PostgreSQL. These files are retained to communicate the
+future target model only.
 
 ## Design notes and invariants
 

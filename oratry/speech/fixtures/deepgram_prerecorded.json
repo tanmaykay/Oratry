@@ -1,0 +1,17 @@
+{
+  "metadata": {"request_id": "request-123", "duration": 0.91, "detected_language": "en", "model_info": {"name": "nova-3", "version": "2026-01-01"}},
+  "results": {
+    "channels": [{"alternatives": [{
+      "transcript": "Um, clear language.",
+      "confidence": 0.97,
+      "words": [
+        {"word": "Um", "start": 0.0, "end": 0.12, "confidence": 0.91},
+        {"word": "clear", "start": 0.15, "end": 0.46, "confidence": 0.98},
+        {"word": "language", "start": 0.49, "end": 0.91, "confidence": 0.99}
+      ]
+    }]}],
+    "utterances": [
+      {"transcript": "Um, clear language.", "start": 0.0, "end": 0.91}
+    ]
+  }
+}

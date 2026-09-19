@@ -1,7 +1,26 @@
-"""initial Oratry V1 schema"""
+"""initial Oratry V1 runtime schema"""
 from alembic import op
-from app.db import Base
-from app import models  # noqa: F401
+import sqlalchemy as sa
 revision="20260912_01"; down_revision=None; branch_labels=None; depends_on=None
-def upgrade(): Base.metadata.create_all(op.get_bind())
-def downgrade(): Base.metadata.drop_all(op.get_bind())
+def upgrade():
+    op.create_table("users", sa.Column("id", sa.String(36), primary_key=True), sa.Column("email", sa.String(320), nullable=False), sa.Column("password_hash", sa.String(255), nullable=False), sa.Column("accepted_terms", sa.Boolean(), nullable=False), sa.Column("preferences", sa.JSON(), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False))
+    op.create_index("ix_users_email", "users", ["email"], unique=True)
+    op.create_table("challenges", sa.Column("id", sa.String(36), primary_key=True), sa.Column("version", sa.Integer(), nullable=False), sa.Column("prompt", sa.Text(), nullable=False), sa.Column("preparation_guidance", sa.Text(), nullable=False), sa.Column("target_skills", sa.JSON(), nullable=False), sa.Column("difficulty", sa.Integer(), nullable=False), sa.Column("target_duration_seconds", sa.Integer(), nullable=False), sa.Column("rubric_version", sa.String(32), nullable=False), sa.Column("active", sa.Boolean(), nullable=False))
+    op.create_table("challenge_assignments", sa.Column("id", sa.String(36), primary_key=True), sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False), sa.Column("challenge_id", sa.String(36), sa.ForeignKey("challenges.id"), nullable=False), sa.Column("reason", sa.String(80), nullable=False), sa.Column("status", sa.String(30), nullable=False), sa.Column("sequence", sa.Integer(), nullable=False), sa.Column("assigned_at", sa.DateTime(timezone=True), nullable=False))
+    op.create_index("ix_challenge_assignments_user_id", "challenge_assignments", ["user_id"])
+    op.create_table("attempts", sa.Column("id", sa.String(36), primary_key=True), sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False), sa.Column("assignment_id", sa.String(36), sa.ForeignKey("challenge_assignments.id"), nullable=False), sa.Column("status", sa.String(30), nullable=False), sa.Column("comparison_group_id", sa.String(36), nullable=False), sa.Column("retry_of_attempt_id", sa.String(36), sa.ForeignKey("attempts.id")), sa.Column("ordinal", sa.Integer(), nullable=False), sa.Column("object_key", sa.String(512)), sa.Column("checksum", sa.String(128)), sa.Column("duration_seconds", sa.Float()), sa.Column("content_type", sa.String(100)), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False), sa.Column("sealed_at", sa.DateTime(timezone=True)), sa.Column("completed_at", sa.DateTime(timezone=True)))
+    op.create_index("ix_attempts_user_id", "attempts", ["user_id"])
+    op.create_table("analysis_runs", sa.Column("id", sa.String(36), primary_key=True), sa.Column("attempt_id", sa.String(36), sa.ForeignKey("attempts.id"), nullable=False), sa.Column("version", sa.Integer(), nullable=False), sa.Column("status", sa.String(30), nullable=False), sa.Column("current_stage", sa.String(40), nullable=False), sa.Column("failure_code", sa.String(80)), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False), sa.UniqueConstraint("attempt_id", "version"))
+    op.create_index("ix_analysis_runs_attempt_id", "analysis_runs", ["attempt_id"])
+    op.create_table("analysis_results", sa.Column("id", sa.String(36), primary_key=True), sa.Column("analysis_run_id", sa.String(36), sa.ForeignKey("analysis_runs.id"), nullable=False), sa.Column("result_type", sa.String(40), nullable=False), sa.Column("payload", sa.JSON(), nullable=False), sa.UniqueConstraint("analysis_run_id", "result_type"))
+    op.create_table("skill_states", sa.Column("id", sa.String(36), primary_key=True), sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False), sa.Column("skill", sa.String(30), nullable=False), sa.Column("estimated_level", sa.Float(), nullable=False), sa.Column("confidence", sa.Float(), nullable=False), sa.Column("model_version", sa.String(30), nullable=False), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False), sa.UniqueConstraint("user_id", "skill"))
+    op.create_index("ix_skill_states_user_id", "skill_states", ["user_id"])
+    op.create_table("skill_evidence", sa.Column("id", sa.String(36), primary_key=True), sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False), sa.Column("skill", sa.String(30), nullable=False), sa.Column("observed_level", sa.Float(), nullable=False), sa.Column("confidence", sa.Float(), nullable=False), sa.Column("evidence_type", sa.String(40), nullable=False), sa.Column("analysis_run_id", sa.String(36), sa.ForeignKey("analysis_runs.id")), sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False))
+    op.create_index("ix_skill_evidence_user_id", "skill_evidence", ["user_id"])
+    op.create_index("ix_skill_evidence_skill", "skill_evidence", ["skill"])
+    op.create_table("vocabulary_items", sa.Column("id", sa.String(36), primary_key=True), sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False), sa.Column("word", sa.String(200), nullable=False), sa.Column("practice_status", sa.String(30), nullable=False))
+    op.create_index("ix_vocabulary_items_user_id", "vocabulary_items", ["user_id"])
+
+def downgrade():
+    for table in ("vocabulary_items", "skill_evidence", "skill_states", "analysis_results", "analysis_runs", "attempts", "challenge_assignments", "challenges", "users"):
+        op.drop_table(table)

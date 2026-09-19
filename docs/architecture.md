@@ -1,8 +1,8 @@
 # Oratry V1 Architecture
 
-## Current state
+## Scope and implementation boundary
 
-This repository is a greenfield Python project. It currently contains a `main.py` program that prints a greeting and a minimal `pyproject.toml`; it has no web client, API, database, migrations, tests, background workers, or provider integrations. There is no existing product implementation to preserve beyond retaining the Python project as the starting point for the backend.
+This document defines the target technical architecture. Implementation status is deliberately kept out of this document and lives in `project/CURRENT_STATE.md`. The active codebase is a modular-monolith prototype with a mock browser flow and a separate FastAPI demo API; do not infer that every target component below is already implemented.
 
 ## Target state
 
@@ -27,7 +27,7 @@ The API is the only component permitted to issue uploads and read product data. 
 
 ## Logical module boundaries
 
-Suggested backend package layout (a target layout, not a request to implement it now):
+Target backend module boundaries:
 
 ```
 backend/

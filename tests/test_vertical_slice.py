@@ -3,7 +3,23 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.db import Base
 from app.main import app, get_db
+from app.main import get_object_storage
 from app.services import process_job
+from app.storage import ObjectMetadata, UploadInstruction
+from datetime import timedelta
+
+
+class FakeStorage:
+    provider_name = "fake-private"
+
+    def create_upload(self, *, object_key, content_type, max_bytes, checksum_sha256):
+        return UploadInstruction("PUT", "https://storage.example.test/upload", object_key, {"Content-Type": content_type}, timedelta(minutes=15))
+
+    def head(self, object_key):
+        return ObjectMetadata(object_key, "audio/webm", 10, "a" * 64)
+
+    def delete(self, object_key):
+        pass
 
 def test_recording_to_completed_feedback_flow(tmp_path):
     engine=create_engine(f"sqlite:///{tmp_path / 'test.db'}",connect_args={"check_same_thread":False})
@@ -13,6 +29,7 @@ def test_recording_to_completed_feedback_flow(tmp_path):
         try: yield db
         finally: db.close()
     app.dependency_overrides[get_db]=override
+    app.dependency_overrides[get_object_storage]=lambda: FakeStorage()
     try:
         with TestClient(app) as client:
             sign_up=client.post("/v1/auth/sign-up",json={"email":"speaker@example.com","password":"valid-password","acceptedTerms":True})
@@ -21,8 +38,8 @@ def test_recording_to_completed_feedback_flow(tmp_path):
             challenge=client.post("/v1/challenges/generate",headers=headers,json={"prompt":"Explain a decision you made and defend it.","preparationGuidance":"Use a clear beginning, middle, and end.","targetSkills":["structure","fluency"],"difficulty":2,"targetDurationSeconds":90}).json()
             recommended=client.get("/v1/challenges/recommended",headers=headers).json()
             assert recommended["challenge"]["id"]==challenge["id"]
-            attempt=client.post(f"/v1/assignments/{recommended['assignmentId']}/attempts",headers=headers).json()
-            complete=client.post(f"/v1/attempts/{attempt['id']}/upload-complete",headers=headers,json={"objectKey":attempt["upload"]["objectKey"],"checksum":"a"*64,"durationSeconds":60,"contentType":"audio/webm"})
+            attempt=client.post(f"/v1/assignments/{recommended['assignmentId']}/attempts",headers=headers,json={"checksumSha256":"a"*64}).json()
+            complete=client.post(f"/v1/attempts/{attempt['id']}/upload-complete",headers=headers,json={"objectKey":attempt["upload"]["objectKey"],"durationSeconds":60,"contentType":"audio/webm","byteSize":10})
             assert complete.status_code==202
             with Local() as worker_db:
                 process_job(worker_db, attempt["id"])
@@ -41,11 +58,12 @@ def test_attempt_authorization_hides_other_users(tmp_path):
         try: yield db
         finally: db.close()
     app.dependency_overrides[get_db]=override
+    app.dependency_overrides[get_object_storage]=lambda: FakeStorage()
     try:
         with TestClient(app) as client:
             def token(email): return client.post("/v1/auth/sign-up",json={"email":email,"password":"valid-password","acceptedTerms":True}).json()["session"]["accessToken"]
             first={"Authorization":"Bearer "+token("one@example.com")}; second={"Authorization":"Bearer "+token("two@example.com")}
             challenge=client.post("/v1/challenges/generate",headers=first,json={"prompt":"Tell a story with a clear ending.","preparationGuidance":"Prepare.","targetSkills":["structure"],"difficulty":1,"targetDurationSeconds":60}).json()
-            assignment=client.get("/v1/challenges/recommended",headers=first).json()["assignmentId"]; attempt=client.post(f"/v1/assignments/{assignment}/attempts",headers=first).json()
+            assignment=client.get("/v1/challenges/recommended",headers=first).json()["assignmentId"]; attempt=client.post(f"/v1/assignments/{assignment}/attempts",headers=first,json={"checksumSha256":"a"*64}).json()
             assert client.get(f"/v1/attempts/{attempt['id']}",headers=second).status_code==404
     finally: app.dependency_overrides.clear()

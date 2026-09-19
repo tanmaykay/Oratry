@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Evaluation"
+  short_description: "Help with Oratry Evaluation tasks"
+policy:
+  allow_implicit_invocation: false

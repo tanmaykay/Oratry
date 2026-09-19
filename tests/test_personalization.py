@@ -7,6 +7,10 @@ from app.personalization.challenge_engine import (
 )
 from app.personalization.skill_engine import SkillEvidence, update_skill_state
 from app.personalization.vocabulary_engine import VocabularyProgress, VocabularyState, select_vocabulary
+from app.personalization.baseline_policy import (
+    BaselineIncompleteError, baseline_assignments, baseline_progress, recommend_after_baseline,
+)
+from app.personalization.catalog import BASELINE_CATALOG, PRACTICE_CATALOG
 
 
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
@@ -49,3 +53,40 @@ def test_vocabulary_only_advances_and_prefers_retrieval_stage():
     assert select_vocabulary([encountered, recalled], "work")[0].vocabulary_id == "a"
     assert recalled.advance(VocabularyState.USED_CORRECTLY, NOW).state == VocabularyState.USED_CORRECTLY
     with pytest.raises(ValueError): recalled.advance(VocabularyState.RECOGNIZED, NOW)
+
+
+def test_baseline_sequence_is_curated_stable_and_resumable():
+    assignments = baseline_assignments()
+    assert [item.sequence for item in assignments] == [1, 2, 3]
+    assert [item.challenge.id for item in assignments] == [
+        "baseline-clarity-v1", "baseline-structure-v1", "baseline-delivery-v1",
+    ]
+    progress = baseline_progress(("baseline-clarity-v1", "unrelated-completed-id"))
+    assert progress.next_assignment == assignments[1]
+    assert not progress.is_complete
+
+
+def test_baseline_catalog_covers_all_core_skills_without_generating_prompts():
+    assignments = baseline_assignments()
+    covered_skills = {skill for assignment in assignments for skill in assignment.challenge.target_skills}
+    assert covered_skills == {"thinking", "structure", "language", "fluency", "delivery"}
+    assert all(assignment.reason == "baseline" for assignment in assignments)
+
+
+def test_adaptive_recommendation_requires_baseline_then_uses_evidence_projection():
+    with pytest.raises(BaselineIncompleteError):
+        recommend_after_baseline(completed_baseline_challenge_ids=(), skill_levels={}, now=NOW)
+    result = recommend_after_baseline(
+        completed_baseline_challenge_ids=[item.id for item in BASELINE_CATALOG],
+        skill_levels={"structure": 20, "thinking": 30, "fluency": 90, "language": 90, "delivery": 90},
+        candidates=PRACTICE_CATALOG, now=NOW,
+    )
+    assert result.challenge.id == "practice-structure-v1"
+    assert "targets current skill need (thinking, structure)" in result.reasons
+
+
+def test_identical_post_baseline_inputs_have_a_stable_recommendation():
+    completed = [item.id for item in BASELINE_CATALOG]
+    first = recommend_after_baseline(completed_baseline_challenge_ids=completed, skill_levels={}, now=NOW)
+    second = recommend_after_baseline(completed_baseline_challenge_ids=completed, skill_levels={}, now=NOW)
+    assert first == second

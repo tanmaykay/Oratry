@@ -1,0 +1,5 @@
+interface:
+  display_name: "Oratry Backend"
+  short_description: "Help with Oratry Backend tasks"
+policy:
+  allow_implicit_invocation: false
