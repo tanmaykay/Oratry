@@ -1,0 +1,126 @@
+INFO:     127.0.0.1:61251 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50837 - "POST /v1/auth/sign-up HTTP/1.1" 409 Conflict
+INFO:     127.0.0.1:51131 - "POST /v1/auth/sign-in HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:56432 - "GET /v1/auth/development-outbox HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59854 - "POST /v1/auth/sign-in HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:49160 - "POST /v1/auth/resend-activation HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:64388 - "GET /v1/auth/development-outbox HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57219 - "POST /v1/auth/sign-in HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:51848 - "POST /v1/auth/sign-in HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:50605 - "POST /v1/auth/resend-activation HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:49863 - "GET /v1/auth/development-outbox HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49863 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56943 - "POST /v1/auth/sign-in HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:62908 - "POST /v1/auth/resend-activation HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52601 - "GET /v1/auth/development-outbox HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52951 - "GET /v1/auth/activate?token=XcwAIxz0xLEre-P-YBA7Vg-UcJL-2FjhPhkMsUxKEzc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50689 - "GET /v1/auth/activate?token=XcwAIxz0xLEre-P-YBA7Vg-UcJL-2FjhPhkMsUxKEzc HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:50690 - "GET /v1/home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50691 - "GET /v1/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57348 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57347 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57272 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57273 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61972 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61971 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55587 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55586 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57181 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49227 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59582 - "POST /v1/assignments/23e9a45b-d35b-4055-9b95-2081cfb8a6b2/attempts HTTP/1.1" 201 Created
+INFO:     127.0.0.1:57141 - "POST /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/upload-complete HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:56032 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56033 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59183 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59184 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61432 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61431 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63601 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63602 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63155 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51354 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61976 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61975 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54523 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54524 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64211 - "GET /v1/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64212 - "GET /v1/home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62728 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62729 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57724 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64856 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50893 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54732 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54150 - "GET /v1/vocabulary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54151 - "GET /v1/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54152 - "GET /v1/home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56758 - "GET /v1/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56759 - "GET /v1/home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63002 - "GET /v1/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63003 - "GET /v1/home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54646 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54647 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50056 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50057 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62578 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59159 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:62577 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62576 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61841 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57092 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65070 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:65069 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65068 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61903 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61902 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61901 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52470 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52472 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63848 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63849 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52390 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52388 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52389 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51366 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:51367 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51368 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52602 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52600 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52601 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53863 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53862 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57879 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54074 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52574 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52572 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52898 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52573 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53729 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53728 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56247 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56245 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56246 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64221 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64220 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62054 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62055 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61395 - "GET /v1/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61396 - "GET /v1/home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54783 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54782 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50666 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50667 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53195 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53194 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53193 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62722 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61134 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61135 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/recording-playback HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49808 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49807 - "GET /v1/attempts/798ebc49-2ae0-4511-9671-be6e48bfe2b2/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49679 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49678 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61011 - "GET /v1/progress/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57789 - "GET /v1/progress HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53091 - "GET /openapi.json HTTP/1.1" 200 OK

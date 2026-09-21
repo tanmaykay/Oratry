@@ -6,6 +6,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
@@ -48,6 +49,13 @@ class UploadInstruction:
 
 
 @dataclass(frozen=True)
+class DownloadInstruction:
+    """A short-lived private object read instruction for an authenticated owner."""
+    url: str
+    expires_in: timedelta
+
+
+@dataclass(frozen=True)
 class ObjectMetadata:
     object_key: str
     content_type: str
@@ -63,6 +71,8 @@ class ObjectStorageProvider(Protocol):
         self, *, object_key: str, content_type: str, max_bytes: int, checksum_sha256: str
     ) -> UploadInstruction: ...
     def head(self, object_key: str) -> ObjectMetadata: ...
+    def download(self, object_key: str, destination: Path) -> None: ...
+    def create_download(self, *, object_key: str) -> DownloadInstruction: ...
     def delete(self, object_key: str) -> None: ...
 
 
@@ -71,9 +81,10 @@ class R2ObjectStorageProvider:
 
     provider_name = "cloudflare-r2"
 
-    def __init__(self, *, endpoint_url: str, bucket: str, access_key_id: str, secret_access_key: str, upload_ttl_seconds: int = 900):
+    def __init__(self, *, endpoint_url: str, bucket: str, access_key_id: str, secret_access_key: str, upload_ttl_seconds: int = 900, download_ttl_seconds: int = 300):
         self.bucket = bucket
         self.upload_ttl_seconds = upload_ttl_seconds
+        self.download_ttl_seconds = download_ttl_seconds
         try:
             import boto3
         except ImportError as exc:  # pragma: no cover - dependency installation is runtime-specific
@@ -104,6 +115,14 @@ class R2ObjectStorageProvider:
             timedelta(seconds=self.upload_ttl_seconds),
         )
 
+    def create_download(self, *, object_key: str) -> DownloadInstruction:
+        """Issue a short-lived GET only after application authorization."""
+        url = self.client.generate_presigned_url(
+            "get_object", Params={"Bucket": self.bucket, "Key": object_key},
+            ExpiresIn=self.download_ttl_seconds, HttpMethod="GET",
+        )
+        return DownloadInstruction(url, timedelta(seconds=self.download_ttl_seconds))
+
     def head(self, object_key: str) -> ObjectMetadata:
         item = self.client.head_object(Bucket=self.bucket, Key=object_key)
         checksum = item.get("ChecksumSHA256")
@@ -116,3 +135,7 @@ class R2ObjectStorageProvider:
 
     def delete(self, object_key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=object_key)
+
+    def download(self, object_key: str, destination: Path) -> None:
+        """Download a private object for a worker only; never create a public URL."""
+        self.client.download_file(self.bucket, object_key, str(destination))

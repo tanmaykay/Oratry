@@ -6,7 +6,7 @@ export type ChallengeAssignment = {
   assignmentId: string;
   status: string;
   reason: "baseline" | "recommended" | string;
-  challenge: { id: string; version: number; prompt: string; preparationGuidance: string; targetSkills: string[]; difficulty: number; targetDurationSeconds: number };
+  challenge: { id: string; version: number; prompt: string; preparationGuidance: string; targetSkills: string[]; targetVocabulary: string[]; difficulty: number; targetDurationSeconds: number };
 };
 export type BaselineResponse = { status: "not_started" | "in_progress" | "completed"; assignments: ChallengeAssignment[]; currentAssignment: ChallengeAssignment | null };
 export type MeResponse = ApiUser & { onboardingState: BaselineResponse["status"]; currentAssignment: ChallengeAssignment | null };
@@ -20,8 +20,22 @@ export type StoredSession = AuthResponse;
 export type UploadInstruction = { method: "PUT"; url: string; headers: Record<string, string>; objectKey: string; expiresAt: string };
 export type UploadAttempt = { id: string; status: "uploading" | "queued" | string; assignmentId: string; createdAt: string; upload: UploadInstruction };
 export type UploadCompleteResponse = { id: string; status: "queued" | string; queue: { durable: boolean; delivery: string } };
+export type AttemptResponse = { id: string; status: string; assignmentId: string; challenge: ChallengeAssignment["challenge"] };
 export type ProgressAttempt = { id: string; status: string; assignmentId: string; createdAt: string; challenge: ChallengeAssignment["challenge"] };
 export type ProgressResponse = { attempts: ProgressAttempt[] };
+export type PlaybackResponse = { url: string; expiresAt: string; contentType: string };
+export type ComparisonEvidence = { attemptId: string; ordinal: number; completedAt: string; overallScore: number | null; metrics: Array<{ name: string; value: unknown; unit?: string }> };
+export type ComparisonResponse = { challenge: ChallengeAssignment["challenge"]; original: ComparisonEvidence; retry: ComparisonEvidence };
+export type TranscriptWord = { word: string; normalized_word: string; start_time: number | null; end_time: number | null; confidence: number | null };
+export type AnalysisResultResponse = {
+  attemptId: string;
+  analysisVersion: number;
+  transcript: { text: string; segments: { text: string; start_time: number | null; end_time: number | null; words: TranscriptWord[] }[]; confidence: number | null };
+  objectiveMetrics: { items: Array<{ name: string; value: unknown; unit?: string; source?: string; measurement_kind?: string; reliability?: string; note?: string }> };
+  evaluation: { result: { dimensions: Record<string, { score: number; observation: string; interpretation: string; evidence: unknown[] }>; primary_weakness: { dimension: string; observation: string; explanation: string }; recommendation: { action: string; success_criterion: string }; next_exercise: { title: string; instructions: string; duration_seconds: number }; limitations: string[] }; provenance: { provider: string; model: string } };
+  scorecard: { overall?: number; dimensions?: Record<string, { score: number | null; rule?: string }> };
+  coachingRecommendation: { primaryWeakness: { dimension: string; observation: string; explanation: string }; recommendation: { action: string; success_criterion: string }; nextExercise: { title: string; instructions: string; duration_seconds: number } };
+};
 export type SkillState = { skill: string; estimatedLevel: number; confidence: number; modelVersion: string };
 export type SkillsResponse = { skills: SkillState[] };
 export type DictionaryMeaning = { partOfSpeech?: string | null; definitions?: string[]; examples?: string[]; synonyms?: string[]; antonyms?: string[] };
@@ -69,7 +83,7 @@ export const api = {
   baseline: (token: string) => request<BaselineResponse>("/baseline", {}, token),
   home: (token: string) => request<HomeResponse>("/home", {}, token),
   currentAssignment: (token: string) => request<ChallengeAssignment>("/assignments/current", {}, token),
-  createAttempt: (token: string, assignmentId: string, contentType: string, checksumSha256: string) => request<UploadAttempt>(`/assignments/${assignmentId}/attempts`, { method: "POST", body: JSON.stringify({ contentType, checksumSha256 }) }, token),
+  createAttempt: (token: string, assignmentId: string, contentType: string, checksumSha256: string, retryOfAttemptId?: string) => request<UploadAttempt>(`/assignments/${assignmentId}/attempts`, { method: "POST", body: JSON.stringify({ contentType, checksumSha256, retryOfAttemptId }) }, token),
   uploadBlob: async (instruction: UploadInstruction, blob: Blob): Promise<void> => {
     let response: Response;
     try { response = await fetch(instruction.url, { method: instruction.method, headers: instruction.headers, body: blob }); }
@@ -77,7 +91,10 @@ export const api = {
     if (!response.ok) throw new ApiError(response.status, "upload_failed", "Your recording could not be uploaded. Try again before recording a new response.");
   },
   completeUpload: (token: string, attempt: UploadAttempt, durationSeconds: number, contentType: string, byteSize: number) => request<UploadCompleteResponse>(`/attempts/${attempt.id}/upload-complete`, { method: "POST", body: JSON.stringify({ objectKey: attempt.upload.objectKey, durationSeconds, contentType, byteSize }) }, token),
-  attempt: (token: string, attemptId: string) => request<{ id: string; status: string; assignmentId: string }>(`/attempts/${attemptId}`, {}, token),
+  attempt: (token: string, attemptId: string) => request<AttemptResponse>(`/attempts/${attemptId}`, {}, token),
+  result: (token: string, attemptId: string) => request<AnalysisResultResponse>(`/attempts/${attemptId}/result`, {}, token),
+  playback: (token: string, attemptId: string) => request<PlaybackResponse>(`/attempts/${attemptId}/recording-playback`, {}, token),
+  comparison: (token: string, attemptId: string) => request<ComparisonResponse>(`/attempts/${attemptId}/comparison`, {}, token),
   progress: (token: string) => request<ProgressResponse>("/progress", {}, token),
   skills: (token: string) => request<SkillsResponse>("/progress/skills", {}, token),
   vocabulary: (token: string) => request<VocabularyResponse>("/vocabulary", {}, token),

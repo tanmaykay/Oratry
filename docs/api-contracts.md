@@ -2,7 +2,7 @@
 
 ## Contract status
 
-This is the target public API contract. The implemented FastAPI routes are a smaller demo subset; consult `project/CURRENT_STATE.md` before integrating against it. Route status is maintained by the Architect/Orchestrator, not by specialist workstreams.
+This is the implemented V1 API contract unless a route is explicitly labelled future. Consult `project/CURRENT_STATE.md` for live-provider verification status. Route status is maintained by the Architect/Orchestrator, not by specialist workstreams.
 
 ## Conventions
 
@@ -14,7 +14,7 @@ Target writes accept an `Idempotency-Key` header and return the original success
 
 | Method / path | Request | Success response |
 | --- | --- | --- |
-| `POST /v1/auth/sign-up` | email, password, acceptedTerms | user and session |
+| `POST /v1/auth/sign-up` | email, password, acceptedTerms | unverified user and activation-delivery acknowledgement |
 | `POST /v1/auth/sign-in` | email, password | user and session |
 | `POST /v1/auth/sign-out` | none | `204` |
 | `GET /v1/me` | none | profile, onboarding state, current assignment summary |
@@ -32,7 +32,7 @@ Authentication implementation (hosted identity provider or first-party credentia
 | `GET /v1/assignments/current` | Returns the next practice assignment and immutable challenge version. |
 | `GET /v1/challenges/{challengeId}` | Returns a challenge only when assigned to the caller. |
 
-`ChallengeAssignmentResponse` includes `assignmentId`, `status`, `reason`, and `challenge`: `{ id, version, prompt, preparationGuidance, targetSkills, targetDurationSeconds, difficulty }`. The response does not include hidden evaluation instructions or LLM prompts.
+`ChallengeAssignmentResponse` includes `assignmentId`, `status`, `reason`, and `challenge`: `{ id, version, prompt, preparationGuidance, targetSkills, targetVocabulary, targetDurationSeconds, difficulty }`. `targetVocabulary` is versioned challenge-owned lexical context used for deterministic coverage, not a requirement to force unfamiliar words into a response. The response does not include hidden evaluation instructions or LLM prompts.
 
 ## Recording and analysis
 
@@ -42,10 +42,11 @@ Authentication implementation (hosted identity provider or first-party credentia
 | `POST /v1/attempts/{attemptId}/upload-complete` | `objectKey`, `durationSeconds`, `contentType`, `byteSize` | attempt in `queued` state, `202` |
 | `GET /v1/attempts/{attemptId}` | none | attempt summary, lifecycle status, challenge snapshot |
 | `GET /v1/attempts/{attemptId}/result` | none | completed analysis result; `409 analysis_not_complete` otherwise |
+| `GET /v1/attempts/{attemptId}/recording-playback` | none | owner-authorized, short-lived private `GET` URL while raw audio remains retained |
 | `GET /v1/attempts/{attemptId}/analysis-status` | none | status, stage, retry-safe user message, `updatedAt` |
 | `GET /v1/attempts/{attemptId}/comparison` | none | original/retry summaries when both are complete |
 
-`upload` is either `{ method, url, headers, objectKey, expiresAt }` for direct private object-store upload, or a documented multipart upload plan if recording size requires it. The browser computes `checksumSha256` over the finalized blob before requesting the instruction, then uses every returned upload header verbatim. The browser may only upload the key returned by this call. The server verifies content type, byte size, checksum observed from object storage, and caller-owned key before sealing the attempt. The current local queue response explicitly marks delivery as in-memory and non-durable; durable delivery is an integration requirement. Recording metadata stores a configurable retention deadline and deletion state (`not_scheduled`, `scheduled`, `deleting`, `deleted`, or `delete_failed`); recording bytes never receive permanent public URLs.
+`upload` is `{ method, url, headers, objectKey, expiresAt }` for a direct private object-store upload. The browser computes `checksumSha256` over the finalized blob before requesting the instruction, then uses every returned upload header verbatim. The browser may only upload the key returned by this call. The server verifies content type, byte size, checksum observed from object storage, and caller-owned key before sealing the attempt. Completion atomically persists a durable, idempotent analysis-job delivery. Recording metadata stores a configurable retention deadline and deletion state (`not_scheduled`, `scheduled`, `deleting`, `deleted`, or `delete_failed`); recording bytes never receive permanent public URLs. Playback signs a private object-store `GET` only after owner authorization; it returns `410 recording_unavailable` after deletion begins or the retention deadline passes, even if a background deletion retry has not run yet.
 
 `AttemptResultResponse` separates facts from interpretation:
 

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 from types import SimpleNamespace
 
@@ -9,9 +9,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import Base, get_db
 from app.main import app, get_object_storage, upload_complete
-from app.models import AnalysisRun, Recording
+from app.models import AnalysisJob, AnalysisResult, AnalysisRun, Attempt, Recording
 from app.schemas import UploadComplete
-from app.storage import ObjectMetadata, UploadInstruction, sha256_hex_to_s3_base64
+from app.storage import DownloadInstruction, ObjectMetadata, UploadInstruction, sha256_hex_to_s3_base64
 
 
 class FakeStorage:
@@ -28,6 +28,9 @@ class FakeStorage:
 
     def head(self, object_key):
         return self.metadata or ObjectMetadata(object_key, "audio/webm", 123, "b" * 64)
+
+    def create_download(self, *, object_key):
+        return DownloadInstruction(f"https://storage.example.test/get/{object_key}", timedelta(minutes=5))
 
     def delete(self, object_key):
         pass
@@ -86,7 +89,7 @@ def test_issued_upload_is_private_and_completion_persists_verified_recording(tmp
                 "durationSeconds": 61, "contentType": "audio/webm", "byteSize": 123,
             })
             assert completed.status_code == 202
-            assert completed.json()["queue"] == {"durable": False, "delivery": "in_memory"}
+            assert completed.json()["queue"] == {"durable": True, "delivery": "analysis_jobs"}
             again = client.post(f"/v1/attempts/{payload['id']}/upload-complete", headers=headers, json={
                 "objectKey": payload["upload"]["objectKey"],
                 "durationSeconds": 61, "contentType": "audio/webm", "byteSize": 123,
@@ -98,6 +101,7 @@ def test_issued_upload_is_private_and_completion_persists_verified_recording(tmp
                 assert recording.retention_deadline is None
                 assert recording.deletion_status == "not_scheduled"
                 assert db.scalar(select(AnalysisRun)).status == "queued"
+                assert db.scalar(select(AnalysisJob)).status == "queued"
     finally:
         app.dependency_overrides.clear()
 
@@ -121,6 +125,91 @@ def test_completion_rejects_nonissued_or_unverified_objects(tmp_path):
             })
             assert unverified.status_code == 409
             assert unverified.json()["code"] == "upload_verification_failed"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_recording_playback_is_short_lived_and_respects_retention(tmp_path):
+    storage = FakeStorage()
+    client, local = _client(tmp_path, storage)
+    try:
+        with client:
+            headers, assignment_id = _headers_and_assignment(client)
+            attempt = client.post(
+                f"/v1/assignments/{assignment_id}/attempts",
+                headers=headers,
+                json={"checksumSha256": "b" * 64},
+            ).json()
+            completed = client.post(
+                f"/v1/attempts/{attempt['id']}/upload-complete",
+                headers=headers,
+                json={
+                    "objectKey": attempt["upload"]["objectKey"],
+                    "durationSeconds": 61,
+                    "contentType": "audio/webm",
+                    "byteSize": 123,
+                },
+            )
+            assert completed.status_code == 202
+            playback = client.get(f"/v1/attempts/{attempt['id']}/recording-playback", headers=headers)
+            assert playback.status_code == 200
+            assert playback.json()["url"].startswith("https://storage.example.test/get/private/")
+            assert playback.json()["contentType"] == "audio/webm"
+            assert datetime.fromisoformat(playback.json()["expiresAt"]).astimezone(timezone.utc) > datetime.now(timezone.utc)
+
+            with local() as db:
+                recording = db.scalar(select(Recording).where(Recording.attempt_id == attempt["id"]))
+                recording.retention_deadline = datetime.now(timezone.utc) - timedelta(seconds=1)
+                db.commit()
+            expired = client.get(f"/v1/attempts/{attempt['id']}/recording-playback", headers=headers)
+            assert expired.status_code == 410
+            assert expired.json()["code"] == "recording_unavailable"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_comparison_returns_only_persisted_same_challenge_evidence(tmp_path):
+    storage = FakeStorage()
+    client, local = _client(tmp_path, storage)
+    try:
+        with client:
+            headers, assignment_id = _headers_and_assignment(client)
+            original_response = client.post(
+                f"/v1/assignments/{assignment_id}/attempts", headers=headers, json={"checksumSha256": "b" * 64},
+            ).json()
+            client.post(f"/v1/attempts/{original_response['id']}/upload-complete", headers=headers, json={
+                "objectKey": original_response["upload"]["objectKey"], "durationSeconds": 61,
+                "contentType": "audio/webm", "byteSize": 123,
+            })
+            with local() as db:
+                original = db.get(Attempt, original_response["id"])
+                original.status = "completed"
+                original_run = db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id == original.id))
+                original_run.status = "completed"
+                retry_attempt = Attempt(
+                    user_id=original.user_id, assignment_id=original.assignment_id, status="completed",
+                    retry_of_attempt_id=original.id, comparison_group_id=original.comparison_group_id, ordinal=2,
+                )
+                db.add(retry_attempt); db.flush()
+                retry_attempt_id = retry_attempt.id
+                retry_run = AnalysisRun(attempt_id=retry_attempt.id, version=1, status="completed", current_stage="completed")
+                db.add(retry_run); db.flush()
+                for run, score, fillers in ((original_run, 61, 7), (retry_run, 74, 3)):
+                    db.add(AnalysisResult(analysis_run_id=run.id, result_type="scorecard", payload={"overall": score}))
+                    db.add(AnalysisResult(analysis_run_id=run.id, result_type="metrics", payload={"items": [
+                        {"name": "word_count", "value": 120, "unit": "words"},
+                        {"name": "filler_count", "value": fillers, "unit": "fillers"},
+                        {"name": "immediate_repetitions", "value": ["the"]},
+                    ]}))
+                db.commit()
+            comparison = client.get(f"/v1/attempts/{retry_attempt_id}/comparison", headers=headers)
+            assert comparison.status_code == 200
+            assert comparison.json()["original"]["overallScore"] == 61
+            assert comparison.json()["retry"]["overallScore"] == 74
+            assert comparison.json()["original"]["metrics"] == [
+                {"name": "word_count", "value": 120, "unit": "words"},
+                {"name": "filler_count", "value": 7, "unit": "fillers"},
+            ]
     finally:
         app.dependency_overrides.clear()
 
@@ -186,7 +275,7 @@ def test_upload_complete_recovers_only_a_matching_recording_uniqueness_race():
         UploadComplete(object_key=object_key, duration_seconds=60, content_type="audio/webm", byte_size=123),
         SimpleNamespace(id="user-1"), session, storage,
     )
-    assert result == {"id": attempt_id, "status": "queued", "queue": {"durable": False, "delivery": "in_memory"}}
+    assert result == {"id": attempt_id, "status": "queued", "queue": {"durable": True, "delivery": "analysis_jobs"}}
     assert session.rollback_count == 1
 
 

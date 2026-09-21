@@ -17,7 +17,7 @@ function LoadingScreen() { return <div className="processing narrow"><div classN
 function ErrorScreen({ retry }: { retry: () => void }) { return <div className="processing narrow"><h1>We couldn’t load your practice.</h1><p>Check your connection, then try again.</p><button className="button" onClick={retry}>Try again</button></div>; }
 
 export function OratryApp() {
-  const [view, setView] = useState<View>(() => typeof window !== "undefined" && window.location.pathname === "/activate" ? "activate" : "landing"); const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(false); const [assignment, setAssignment] = useState<ChallengeAssignment | null>(null);
+  const [view, setView] = useState<View>(() => typeof window !== "undefined" && window.location.pathname === "/activate" ? "activate" : "landing"); const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(false); const [assignment, setAssignment] = useState<ChallengeAssignment | null>(null); const [reviewAttemptId, setReviewAttemptId] = useState<string | null>(null); const [retryOfAttemptId, setRetryOfAttemptId] = useState<string | null>(null); const [retryAssignment, setRetryAssignment] = useState<ChallengeAssignment | null>(null);
   const load = useCallback(async () => {
     const stored = readStoredSession(); if (!stored) { setBootstrap(null); setLoading(false); return; }
     setLoading(true); setLoadError(false);
@@ -43,15 +43,15 @@ export function OratryApp() {
   if (loadError) return <ErrorScreen retry={() => void load()} />;
   if (!bootstrap) return view === "signup" ? <Signup go={setView} onAuthenticated={authenticated} /> : view === "activate" ? <Activation go={setView} onAuthenticated={authenticated} /> : <Landing go={setView} />;
 
-  const currentAssignment = assignment ?? bootstrap.home.currentAssignment;
+  const currentAssignment = assignment ?? bootstrap.home.currentAssignment; const practiceAssignment = retryAssignment ?? currentAssignment;
   const content: Record<View, ReactNode> = {
     landing: <Landing go={setView} />, signup: <Signup go={setView} onAuthenticated={authenticated} />, activate: <Activation go={setView} onAuthenticated={authenticated} />,
     onboarding: <Onboarding go={setView} token={token} user={bootstrap.me} onPreferencesSaved={saveProfile} />,
     baseline: <Baseline go={setView} token={token} onStarted={refresh} />,
     home: <Home go={setView} home={bootstrap.home} user={bootstrap.me} onResume={() => void refresh()} />,
-    practice: <Practice go={setView} assignment={currentAssignment} />, briefing: <Briefing go={setView} assignment={currentAssignment} />,
-    prepare: <Preparation go={setView} assignment={currentAssignment} />, speak: <Speaking go={setView} assignment={currentAssignment} token={token} />, processing: <Processing go={setView} />,
-    results: <Results go={setView} />, feedback: <Feedback go={setView} />, retry: <Retry go={setView} />, comparison: <Comparison go={setView} />, progress: <Progress token={token} />, vocabulary: <Vocabulary token={token} />, profile: <Profile token={token} user={bootstrap.me} onSaved={saveProfile} onSignOut={signOut} />
+    practice: <Practice go={setView} assignment={practiceAssignment} />, briefing: <Briefing go={setView} assignment={practiceAssignment} />,
+    prepare: <Preparation go={setView} assignment={practiceAssignment} />, speak: <Speaking go={setView} assignment={practiceAssignment} token={token} retryOfAttemptId={retryOfAttemptId} onQueued={attemptId => { setReviewAttemptId(attemptId); setRetryOfAttemptId(null); setRetryAssignment(null); }} />, processing: <Processing go={setView} token={token} attemptId={reviewAttemptId} onCompleted={() => void refresh()} />,
+    results: <Results go={setView} token={token} attemptId={reviewAttemptId} onRetry={(attemptId, reviewAttempt) => { setRetryOfAttemptId(attemptId); setRetryAssignment({ assignmentId: reviewAttempt.assignmentId, status: "assigned", reason: "recommended", challenge: reviewAttempt.challenge }); setView("speak"); }} />, feedback: <Feedback go={setView} />, retry: <Retry go={setView} />, comparison: <Comparison go={setView} />, progress: <Progress token={token} onReview={attemptId => { setReviewAttemptId(attemptId); setView("results"); }} />, vocabulary: <Vocabulary token={token} />, profile: <Profile token={token} user={bootstrap.me} onSaved={saveProfile} onSignOut={signOut} />
   };
   if (authViews.includes(view)) return <>{content[view]}</>;
   return <Shell view={view} setView={setView} onSignOut={signOut}>{content[view]}</Shell>;

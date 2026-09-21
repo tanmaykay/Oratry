@@ -1,60 +1,52 @@
 # Current state
 
-Last audited: 2026-09-18
+Last audited: 2026-09-21
 
-## What works now
+## Working V1 slice
 
-- A Next.js 15 / React 19 interface provides a complete, clickable local product walkthrough: landing, signup, onboarding, baseline, preparation, simulated recording/processing, results, retry, comparison, progress, vocabulary, and profile.
-- A FastAPI application provides password-based signup/signin, JWT bearer authorization, challenge assignment, attempt lifecycle endpoints, vocabulary endpoints, result retrieval, and a basic progress/skill endpoint.
-- The API has SQLAlchemy models and explicit Alembic migrations. SQLite is the default local database. A PostgreSQL 17 Compose service, gated live-Alembic integration suite, and GitHub Actions PostgreSQL verification job are present. The full active migration chain passed on an isolated non-superuser local PostgreSQL 17 database, including empty-database upgrade, schema/integrity checks, and downgrade cleanup. Python tests cover authorization, the demo recording-to-feedback flow, scoring, evaluation validation, personalization, deterministic speech-analysis modules, configuration, storage port contract, and ORM/migration index parity.
-- A provider-neutral boundary exists for demo transcription and evaluation. An S3-compatible private-storage port and Cloudflare R2 adapter are present; recording retention has a migration-backed metadata lifecycle. The `oratry.speech` package separately provides deterministic transcript and PCM WAV analysis with tests.
-- Skill evidence is persisted and current skill state is derived from recent evidence.
+- The authenticated web application supports signup/activation, sign-in, onboarding, baseline assignment, challenge preparation, browser recording, private direct upload, analysis polling, profile, vocabulary, and progress surfaces. Completed-attempt review loads persisted evidence rather than mock data: challenge context, private replay during retention, deterministic metrics, structured evaluation, timestamp/confidence-aware transcript annotations, same-challenge retries, and before/after comparison.
+- Runtime persistence is migration-owned PostgreSQL. The production database is at Alembic revision `20260922_08`; the active schema has been verified from an empty PostgreSQL database to head.
+- Private Cloudflare R2 signed-upload and server-side deletion canaries passed with the configured credentials. No permanent recording URL is issued.
+- Upload completion verifies object checksum and metadata, persists a recording, and atomically creates a durable `analysis_jobs` delivery. The worker leases, fences, retries, and reclaims deliveries; it is not an in-memory queue.
+- The analysis worker uses the configured Deepgram prerecorded provider, computes deterministic transcript metrics and a versioned deterministic scorecard, requests strict structured Gemini evaluation, persists usage/latency and retention state, then projects skill evidence. Evaluator retries reuse immutable persisted STT evidence rather than paying for STT again.
+- Raw audio is scheduled for configurable post-success deletion (24 hours by default). The retention worker records leases, attempts, backoff, and terminal deletion state while retaining non-audio learning evidence in PostgreSQL.
+- Email activation uses a provider port: development outbox locally and Resend when production configuration is supplied. Vocabulary has a cached dictionary-provider boundary with a Datamuse fallback.
+- Active curated challenges now persist versioned `target_vocabulary` JSON. Targets flow unchanged to deterministic transcript matching, scorecard coverage, and evaluator context. Pre-existing challenge versions retain an empty target list rather than receiving invented historical targets.
 
-## What is demo or mocked
+## Verification at this audit
 
-- The browser still uses `features/shared/mock-data.ts` for most preview screens. Its auth, baseline/onboarding, home, preparation, and recording-upload path now uses the FastAPI API through a typed same-origin client and a session-scoped bearer token. The recorder hashes the finalized browser `MediaRecorder` blob, uses only server-issued private upload headers, and preserves retry-safe completion confirmation. Live upload remains unavailable until private R2 configuration and a checksum canary are complete.
-- API transcription always returns a fixed local transcript and its evaluator returns rule-based demo scores. The API service does not use the richer `oratry.speech` deterministic audio pipeline.
-- `JobQueue` is an in-memory list. Upload completion only validates a caller-supplied object key; no object is stored, verified, or processed. The worker is manually invoked by tests or a legacy background endpoint.
-- Runtime persistence defaults to SQLite. The runtime schema is migration-owned and supports PostgreSQL, though the legacy PostgreSQL SQL artifacts still describe a more complete future model than the active SQLAlchemy schema.
-- Baseline/onboarding/home/comparison/status/idempotency/delete contracts described in docs are absent or only simulated.
+- Python: `109 passed, 3 skipped` (`.venv\\Scripts\\python.exe -m pytest -q`). The skipped tests are intentionally gated external/provider tests.
+- PostgreSQL schema integration: `3 passed` using the configured disposable PostgreSQL test database.
+- Frontend: `npm run lint` and `npm run typecheck` pass.
+- `git diff --check` passes; Windows line-ending notices are non-failing.
+- R2 signed PUT/checksum and delete canaries passed. On 2026-09-21, a browser-originated recording completed end-to-end through R2, Deepgram, and Gemini; transcript, metrics, evaluation, scorecard, feedback, skill evidence, and scheduled retention were persisted.
 
-## Architecture actually present
+## Configuration status and demo gate
+
+The current runtime resolves PostgreSQL, R2, Deepgram, and Gemini provider selections and credentials. Provider unit-price configuration remains intentionally absent: `ANALYSIS_COST_VERSION` is `unconfigured` and all three rate settings are blank. The completed local Gemini run persisted input/output tokens and latency but correctly recorded `estimatedCostUsd: null`. Configure a price version and rates before a cost-accounted production release. Non-local/test worker startup rejects missing rates. OpenAI remains optional and is not required for the working V1 path.
+
+Start the API, analysis worker, and retention worker separately using the documented commands in `README.md`, `docs/analysis-worker-operations.md`, and `docs/retention-operations.md`.
+
+## Known limits
+
+- Cost-rate configuration and continuous-worker deployment verification remain before a cost-accounted Stage 1 release. The browser-to-R2/Deepgram/Gemini functional canary passed.
+- PostgreSQL job-claim semantics have schema coverage; add a multi-process PostgreSQL worker race test before a production pilot.
+- Deployment-specific operational alerts, managed PostgreSQL restore drill, process supervision, and retention canary remain before a pilot. The runbook is in `docs/production-operations.md`.
+- Comparison exposes only persisted score and deterministic metrics for a completed source/retry pair; unavailable comparisons are stated plainly rather than synthesizing improvements.
+- Score calibration and the interactive waveform review are planned as V1-012 and V1-013. A gradient must not imply unvalidated moment-by-moment fluency or delivery scoring; waveform persistence versus the 24-hour raw-audio retention boundary remains a product/privacy decision.
+- Deterministic WAV analysis no longer depends on deprecated `audioop`; it supports 8/16/24/32-bit PCM WAV directly.
+
+## Architecture
 
 ```text
-Next.js mock UI ── no runtime connection ──> FastAPI demo API
-                                             ├─ SQLAlchemy / SQLite runtime models
-                                             ├─ in-memory queue + demo STT/evaluator
-                                             └─ result JSON + skill projection
+Next.js web client -> FastAPI modular monolith -> PostgreSQL
+     |                     |\
+     |                     | -> durable analysis_jobs -> analysis worker
+     |                     |      -> private R2 -> Deepgram -> deterministic metrics
+     |                     |      -> Gemini structured evaluation -> score/coaching/evidence
+     +-> short-lived R2 signed PUT
 
-oratry.speech (independent deterministic analysis library)
-PostgreSQL SQL artifacts (target model; not integrated)
+retention worker -> private R2 delete -> PostgreSQL deletion audit
 ```
 
-This is a useful prototype foundation, but not yet a functioning end-to-end V1 vertical slice.
-
-## Documentation accuracy
-
-- `README.md` accurately labels the browser flow and backend providers as a local preview/demo, but it understates the implementation that now exists.
-- `docs/architecture.md`, `docs/domain-model.md`, and `docs/api-contracts.md` are target technical design/contract documents and explicitly defer implementation status to this file.
-- Several target API endpoints and guarantees documented in `docs/api-contracts.md` do not yet exist.
-- The PostgreSQL SQL artifacts are a target data model, not runtime migrations.
-
-## Verification at audit time
-
-- Python: `43 passed, 2 skipped` using `python -m pytest`. Skipped tests require explicit disposable PostgreSQL test configuration.
-- Frontend: `npm run lint` and `npm run typecheck` pass.
-- `npm test` and `npm run build` cannot spawn child processes in this restricted Windows execution environment (`spawn EPERM`). This is an environment limitation; rerun in a normal developer shell/CI.
-
-## Primary workstream
-
-W2 Speech, W3 Evaluation, W4 Learning, W5 Backend, W6 Frontend, W7 upload implementation, and W8 Frontend Recorder are integrated following cross-workstream review. They provide a fixture-backed Deepgram adapter with canonical usage evidence, a settings-driven strict OpenAI evaluator contract, a stable baseline/recommendation policy, a concurrency-safe durable baseline/home/current-assignment API, an authenticated browser path, and a private signed-upload implementation. W7 is blocked only on private R2 configuration and a real checksum canary; W9 cannot begin real provider pipeline integration until that evidence exists. Current ownership and dependencies are in `project/WORKSTREAMS.md`.
-
-Application startup and the development seed command no longer create database tables. Alembic uses the configured database URL, and the active migrations have explicit table operations rather than `metadata.create_all`. Non-local/test settings reject SQLite and the checked-in JWT default. `compose.yaml`, `docs/postgresql-development.md`, and `.github/workflows/postgres.yml` provide the local/CI verification path. PostgreSQL 17 verification passed locally without persisting credentials.
-
-Provider and retention decisions are recorded in ADR 0003. Configuration names are present in `.env.example`; existing secrets in `.env` were not read or modified. The currently configured Cloudflare variables use legacy names and omit the explicit R2 bucket required by the application; no R2 object was created during the blocked canary attempt.
-
-Milestone 2 has begun with `ObjectStorageProvider`, `R2ObjectStorageProvider`, and a `recordings` retention lifecycle table. The adapter is intentionally not wired to the demo upload endpoint yet: that requires the authenticated browser upload flow and server-side object metadata verification.
-
-## Workstream coordination
-
-Direct feature implementation is paused while the multi-agent workstream model is established. `project/WORKSTREAMS.md` defines specialist ownership, cross-workstream contracts, and the dependency DAG. The lead owns architecture, integration, ADRs, project state, and cross-workstream review.
+Provider SDKs remain behind storage, speech-to-text, and LLM ports. Deterministic measurement and scoring remain separate from model-assisted interpretation.

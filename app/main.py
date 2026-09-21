@@ -9,9 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core import DomainError, configure_logging, create_token, decode_token, domain_error_handler, http_error_handler, password_hash, settings
 from app.db import get_db
-from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, DictionaryEntry, Recording, SkillState, User, VocabularyItem
+from app.models import AnalysisJob, AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, DictionaryEntry, Recording, SkillState, User, VocabularyItem
 from app.schemas import ActivationResend, ChallengeCreate, CreateAttempt, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate, VocabularyUpdate
-from app.services import ActivationService, CurriculumService, DictionaryService, job_queue, owned_attempt, process_job
+from app.services import ActivationService, CurriculumService, DictionaryService, owned_attempt
+from app.analysis_worker import ANALYSIS_STAGE, ANALYSIS_STAGE_VERSION, enqueue_analysis
 from app.email import DevelopmentOutboxEmailProvider, DisabledEmailProvider, EmailDeliveryError, EmailProvider, ResendEmailProvider
 from app.dictionary import DatamuseDictionaryProvider, DictionaryProvider, DisabledDictionaryProvider, FreeDictionaryApiProvider, ResilientDictionaryProvider
 from app.storage import ObjectStorageProvider, R2ObjectStorageProvider
@@ -118,13 +119,14 @@ def _is_upload_completion_uniqueness_error(exc: IntegrityError) -> bool:
         "recordings.attempt_id", "recordings_attempt_id_key",
         "analysis_runs.attempt_id, analysis_runs.version",
         "analysis_runs_attempt_id_version_key",
+        "analysis_jobs.event_key", "analysis_jobs_attempt_id_stage_version_key",
     ))
 def current_user(credentials:HTTPAuthorizationCredentials=Depends(bearer),db:Session=Depends(get_db)):
     user=db.get(User,str(decode_token(credentials.credentials)))
     if not user: raise DomainError("not_found","Resource not found",404)
     return user
 def user_view(user): return {"id":user.id,"email":user.email,"preferences":user.preferences,"emailVerifiedAt":user.email_verified_at,"createdAt":user.created_at}
-def challenge_view(challenge): return {"id":challenge.id,"version":challenge.version,"prompt":challenge.prompt,"preparationGuidance":challenge.preparation_guidance,"targetSkills":challenge.target_skills,"difficulty":challenge.difficulty,"targetDurationSeconds":challenge.target_duration_seconds}
+def challenge_view(challenge): return {"id":challenge.id,"version":challenge.version,"prompt":challenge.prompt,"preparationGuidance":challenge.preparation_guidance,"targetSkills":challenge.target_skills,"targetVocabulary":challenge.target_vocabulary or [],"difficulty":challenge.difficulty,"targetDurationSeconds":challenge.target_duration_seconds}
 def assignment_view(assignment, db):
     return {"assignmentId":assignment.id,"status":assignment.status,"reason":assignment.reason,
             "challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
@@ -268,7 +270,10 @@ def get_challenge(challenge_id:str,user:User=Depends(current_user),db:Session=De
 def create_attempt(assignment_id:str, body:CreateAttempt|None=Body(default=None), user:User=Depends(current_user), db:Session=Depends(get_db), storage:ObjectStorageProvider=Depends(get_object_storage)):
     assignment=db.scalar(select(Assignment).where(Assignment.id==assignment_id,Assignment.user_id==user.id))
     if not assignment: raise DomainError("not_found","Resource not found",404)
-    if assignment.reason == "baseline":
+    # A completed baseline prompt remains retryable even after the learner has
+    # advanced to the next baseline assignment. New baseline attempts retain
+    # the sequential gate; retries are tied to their completed source below.
+    if assignment.reason == "baseline" and not (body and body.retry_of_attempt_id):
         current = CurriculumService(db).current_assignment(user.id)
         if current is None or current.id != assignment.id:
             raise DomainError(
@@ -334,7 +339,7 @@ def upload_complete(attempt_id:str,body:UploadComplete,user:User=Depends(current
             recording.object_key == body.object_key and recording.content_type == content_type
             and recording.byte_size == body.byte_size and recording.checksum_sha256 == attempt.checksum
         ):
-            return {"id":attempt.id,"status":"queued","queue":{"durable":False,"delivery":"in_memory"}}
+            return {"id":attempt.id,"status":"queued","queue":{"durable":True,"delivery":"analysis_jobs"}}
         raise DomainError("invalid_state", "This attempt cannot accept an upload", 409)
     try:
         metadata = storage.head(body.object_key)
@@ -353,6 +358,9 @@ def upload_complete(attempt_id:str,body:UploadComplete,user:User=Depends(current
                      content_type=content_type, byte_size=body.byte_size, checksum_sha256=attempt.checksum,
                      retention_deadline=None, deletion_status="not_scheduled"))
     db.add(AnalysisRun(attempt_id=attempt.id,version=1,status="queued",current_stage="queued"))
+    # The durable event key makes replaying upload completion safe.  The job
+    # carries no recording bytes, transcript, URL, or credential material.
+    enqueue_analysis(db, attempt.id)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -372,18 +380,19 @@ def upload_complete(attempt_id:str,body:UploadComplete,user:User=Depends(current
             and recording.byte_size == body.byte_size
             and recording.checksum_sha256 == sealed.checksum
         ):
-            return {"id": sealed.id, "status": "queued", "queue": {"durable": False, "delivery": "in_memory"}}
+            return {"id": sealed.id, "status": "queued", "queue": {"durable": True, "delivery": "analysis_jobs"}}
         raise exc
-    job_queue.enqueue_attempt_analysis(attempt.id)
-    return {"id":attempt.id,"status":"queued","queue":{"durable":False,"delivery":"in_memory"}}
-def _run_job(attempt_id):
-    from app.db import SessionLocal
-    with SessionLocal() as db: process_job(db,attempt_id)
+    return {"id":attempt.id,"status":"queued","queue":{"durable":True,"delivery":"analysis_jobs"}}
 @app.post("/sessions/{attempt_id}/analyze",status_code=202,include_in_schema=False)
-def analyze(attempt_id:str,background:BackgroundTasks,user:User=Depends(current_user),db:Session=Depends(get_db)):
+def analyze(attempt_id:str,user:User=Depends(current_user),db:Session=Depends(get_db)):
     attempt=owned_attempt(db,user.id,attempt_id)
     if attempt.status not in {"queued","analysis_failed"}: raise DomainError("invalid_state","Analysis cannot be queued",409)
-    background.add_task(_run_job,attempt.id); return {"id":attempt.id,"status":attempt.status}
+    job = db.scalar(select(AnalysisJob).where(AnalysisJob.attempt_id == attempt.id,
+        AnalysisJob.stage == ANALYSIS_STAGE, AnalysisJob.stage_version == ANALYSIS_STAGE_VERSION))
+    if job is None:
+        enqueue_analysis(db, attempt.id)
+        db.commit()
+    return {"id":attempt.id,"status":attempt.status,"queue":{"durable":True,"delivery":"analysis_jobs"}}
 @app.get("/v1/attempts/{attempt_id}")
 @app.get("/sessions/{attempt_id}",include_in_schema=False)
 def get_attempt(attempt_id:str,user:User=Depends(current_user),db:Session=Depends(get_db)): return attempt_view(owned_attempt(db,user.id,attempt_id),db)
@@ -394,6 +403,79 @@ def result(attempt_id:str,user:User=Depends(current_user),db:Session=Depends(get
     if attempt.status!="completed": raise DomainError("analysis_not_complete","Analysis is not complete",409)
     run=db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id==attempt.id).order_by(AnalysisRun.version.desc())); data={row.result_type:row.payload for row in db.scalars(select(AnalysisResult).where(AnalysisResult.analysis_run_id==run.id))}
     return {"attemptId":attempt.id,"analysisVersion":run.version,"transcript":data["transcript"],"objectiveMetrics":data["metrics"],"evaluation":data["evaluation"],"scorecard":data["scorecard"],"coachingRecommendation":data["feedback"]}
+
+
+def _comparison_evidence(db: Session, attempt: Attempt) -> dict:
+    """Return only immutable, learner-facing facts from a completed attempt."""
+    run = db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id == attempt.id).order_by(AnalysisRun.version.desc()))
+    if attempt.status != "completed" or not run or run.status != "completed":
+        raise DomainError("comparison_not_available", "Both attempts must complete analysis before comparison", 409)
+    rows = {row.result_type: row.payload for row in db.scalars(select(AnalysisResult).where(AnalysisResult.analysis_run_id == run.id))}
+    metrics = rows.get("metrics", {}).get("items", [])
+    names = {"duration_seconds", "word_count", "words_per_minute", "filler_count", "filler_rate"}
+    return {
+        "attemptId": attempt.id,
+        "ordinal": attempt.ordinal,
+        "completedAt": attempt.completed_at,
+        "overallScore": rows.get("scorecard", {}).get("overall"),
+        "metrics": [{"name": item["name"], "value": item.get("value"), "unit": item.get("unit")} for item in metrics if item.get("name") in names],
+    }
+
+
+@app.get("/v1/attempts/{attempt_id}/recording-playback")
+def recording_playback(attempt_id: str, user: User = Depends(current_user), db: Session = Depends(get_db), storage: ObjectStorageProvider = Depends(get_object_storage)):
+    """Issue an owner-authorized, short-lived private recording read URL.
+
+    Playback is deliberately unavailable after the retention worker deletes the
+    object. The URL itself is never persisted or returned from a list endpoint.
+    """
+    attempt = owned_attempt(db, user.id, attempt_id)
+    recording = db.scalar(select(Recording).where(Recording.attempt_id == attempt.id))
+    now = datetime.now(timezone.utc)
+    deadline = recording.retention_deadline if recording else None
+    # SQLite drops offsets in lightweight tests; PostgreSQL preserves them.
+    # Compare a normalized UTC instant so the privacy boundary is identical.
+    if deadline is not None and deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    if (
+        not recording
+        or recording.deletion_status in {"deleted", "deleting"}
+        or (deadline is not None and deadline <= now)
+    ):
+        raise DomainError("recording_unavailable", "This recording is no longer available for playback", 410)
+    if recording.storage_provider != storage.provider_name:
+        raise DomainError("recording_unavailable", "This recording cannot be played from the configured storage provider", 409)
+    try:
+        instruction = storage.create_download(object_key=recording.object_key)
+    except Exception as exc:
+        log.info("recording_playback_instruction_failed provider=%s", storage.provider_name)
+        raise DomainError("recording_unavailable", "This recording is temporarily unavailable for playback", 503) from exc
+    expires_at = now + instruction.expires_in
+    return {"url": instruction.url, "expiresAt": expires_at, "contentType": recording.content_type}
+
+
+@app.get("/v1/attempts/{attempt_id}/comparison")
+def comparison(attempt_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Compare a completed retry with its source using persisted evidence only."""
+    selected = owned_attempt(db, user.id, attempt_id)
+    if selected.retry_of_attempt_id:
+        original = owned_attempt(db, user.id, selected.retry_of_attempt_id)
+        retry_attempt = selected
+    else:
+        retry_attempt = db.scalar(select(Attempt).where(
+            Attempt.user_id == user.id,
+            Attempt.retry_of_attempt_id == selected.id,
+            Attempt.status == "completed",
+        ).order_by(Attempt.ordinal.desc(), Attempt.completed_at.desc()))
+        original = selected
+    if retry_attempt is None:
+        raise DomainError("comparison_not_available", "Complete a retry of this challenge to compare attempts", 409)
+    assignment = db.get(Assignment, original.assignment_id)
+    return {
+        "challenge": challenge_view(db.get(Challenge, assignment.challenge_id)),
+        "original": _comparison_evidence(db, original),
+        "retry": _comparison_evidence(db, retry_attempt),
+    }
 @app.post("/sessions/{attempt_id}/retry",status_code=201,include_in_schema=False)
 def retry(attempt_id:str,user:User=Depends(current_user),db:Session=Depends(get_db)):
     source=owned_attempt(db,user.id,attempt_id)

@@ -232,6 +232,7 @@ class CurriculumService:
             "prompt": candidate.prompt,
             "preparation_guidance": candidate.preparation_guidance,
             "target_skills": list(candidate.target_skills),
+            "target_vocabulary": list(candidate.vocabulary_ids),
             "difficulty": candidate.difficulty.level,
             "target_duration_seconds": candidate.target_duration_seconds,
             "rubric_version": "1",

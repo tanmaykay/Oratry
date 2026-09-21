@@ -12,7 +12,7 @@ Accepted
 - Raw recordings are stored in a private Cloudflare R2 Standard bucket through an S3-compatible `ObjectStorageProvider`. The application issues only short-lived signed URLs; permanent public URLs are forbidden.
 - After successful analysis, raw audio is retained for a configurable period, defaulting to 24 hours, then automatically deleted. PostgreSQL retains the retention deadline and deletion outcome plus all non-audio learning evidence: transcript, word timestamps, deterministic metrics, evaluations, scores, feedback, challenge/attempt history, and skill observations.
 - V1 uses Deepgram Nova-3 prerecorded transcription. Provider adapters must normalize word-level timestamps and confidence into the canonical transcript contract.
-- V1 uses OpenAI behind `LLMProvider`. The evaluator defaults to configuration-selected `gpt-5.6-luna` with low reasoning effort and strict structured output. `gpt-5.6-terra` is a configuration-only evaluator comparison option.
+- Superseded for evaluator choice by ADR 0004. The original OpenAI evaluator remains available behind `LLMProvider` for configuration-selected comparisons.
 - Every completed analysis records STT audio duration, LLM input/output tokens, estimated provider cost, and latency. The initial operating target is less than approximately USD 0.01 variable cost for a two-minute session.
 
 ## Consequences

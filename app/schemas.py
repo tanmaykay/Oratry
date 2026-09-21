@@ -24,7 +24,20 @@ class UploadComplete(Camel):
     duration_seconds: float=Field(gt=0,le=600)
     content_type: str
     byte_size: int=Field(gt=0)
-class ChallengeCreate(Camel): prompt: str=Field(min_length=10); preparation_guidance: str; target_skills: list[str]; difficulty: int=Field(ge=1,le=5); target_duration_seconds: int=Field(ge=15,le=600)
+class ChallengeCreate(Camel):
+    prompt: str=Field(min_length=10); preparation_guidance: str; target_skills: list[str]
+    target_vocabulary: list[str] = Field(default_factory=list, max_length=12)
+    difficulty: int=Field(ge=1,le=5); target_duration_seconds: int=Field(ge=15,le=600)
+
+    @field_validator("target_vocabulary")
+    @classmethod
+    def normalized_target_vocabulary(cls, value: list[str]) -> list[str]:
+        normalized = [item.casefold().strip() for item in value]
+        if any(not item or len(item) > 80 for item in normalized):
+            raise ValueError("targetVocabulary entries must be non-empty and at most 80 characters")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("targetVocabulary entries must be unique")
+        return normalized
 class VocabularyCreate(Camel):
     word: str=Field(min_length=1,max_length=200)
     lookup: bool = True

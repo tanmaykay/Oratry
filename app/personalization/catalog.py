@@ -86,7 +86,7 @@ BASELINE_CATALOG: tuple[ChallengeCandidate, ...] = (
                                speaking_time=2, vocabulary_difficulty=1, opposition=1, pressure=1),
         cognitive_task=CognitiveTask.EXPLAIN,
         topic="everyday decisions",
-        target_duration_seconds=60,
+        target_duration_seconds=60, vocabulary_ids=("decision", "because", "therefore"),
         family_id="baseline-clarity",
     ),
     ChallengeCandidate(
@@ -98,7 +98,7 @@ BASELINE_CATALOG: tuple[ChallengeCandidate, ...] = (
                                speaking_time=3, vocabulary_difficulty=2, opposition=1, pressure=2),
         cognitive_task=CognitiveTask.ARGUE,
         topic="practical improvement",
-        target_duration_seconds=90,
+        target_duration_seconds=90, vocabulary_ids=("claim", "reason", "conclusion"),
         family_id="baseline-structure",
     ),
     ChallengeCandidate(
@@ -110,7 +110,7 @@ BASELINE_CATALOG: tuple[ChallengeCandidate, ...] = (
                                speaking_time=3, vocabulary_difficulty=1, opposition=1, pressure=2),
         cognitive_task=CognitiveTask.STORY,
         topic="problem solving",
-        target_duration_seconds=90,
+        target_duration_seconds=90, vocabulary_ids=("problem", "resolve", "outcome"),
         family_id="baseline-delivery",
     ),
 )
@@ -129,7 +129,7 @@ PRACTICE_CATALOG: tuple[ChallengeCandidate, ...] = (
                                speaking_time=3, vocabulary_difficulty=2, opposition=2, pressure=2),
         cognitive_task=CognitiveTask.ARGUE,
         topic="practical improvement",
-        target_duration_seconds=120,
+        target_duration_seconds=120, vocabulary_ids=("trade-off", "evidence", "outcome"),
         family_id="practice-structure",
     ),
     ChallengeCandidate(
@@ -141,7 +141,7 @@ PRACTICE_CATALOG: tuple[ChallengeCandidate, ...] = (
                                speaking_time=3, vocabulary_difficulty=2, opposition=1, pressure=3),
         cognitive_task=CognitiveTask.COMPARE,
         topic="leisure choices",
-        target_duration_seconds=120,
+        target_duration_seconds=120, vocabulary_ids=("compare", "criterion", "recommend"),
         family_id="practice-fluency",
     ),
     ChallengeCandidate(
@@ -152,9 +152,13 @@ PRACTICE_CATALOG: tuple[ChallengeCandidate, ...] = (
         difficulty=_difficulty(topic_familiarity=3, cognitive_complexity=2, preparation_time=2,
                                speaking_time=3, vocabulary_difficulty=2, opposition=1, pressure=2),
         cognitive_task=CognitiveTask.EXPLAIN,
-        topic="work", target_duration_seconds=120, family_id="practice-delivery",
+        topic="work", target_duration_seconds=120, vocabulary_ids=("purpose", "sequence", "practical"), family_id="practice-delivery",
     ),
 )
+
+
+ACTIVE_CATALOG: tuple[ChallengeCandidate, ...] = BASELINE_CATALOG + PRACTICE_CATALOG
+"""The production V1 curriculum entries eligible for persistence/assignment."""
 
 
 # These entries make the approved next curriculum explicit without silently

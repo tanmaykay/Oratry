@@ -1,7 +1,8 @@
 from datetime import timedelta
+from pathlib import Path
 
 from app.storage import (
-    ObjectMetadata, ObjectStorageProvider, R2ObjectStorageProvider, UploadInstruction,
+    DownloadInstruction, ObjectMetadata, ObjectStorageProvider, R2ObjectStorageProvider, UploadInstruction,
     sha256_hex_to_s3_base64, sha256_s3_base64_to_hex,
 )
 
@@ -12,6 +13,10 @@ class FakeStorage:
         return UploadInstruction("PUT", "https://example.test/upload", object_key, {"Content-Type": content_type}, timedelta(minutes=15))
     def head(self, object_key):
         return ObjectMetadata(object_key, "audio/webm", 10, "a" * 64)
+    def download(self, object_key, destination: Path):
+        destination.write_bytes(b"audio")
+    def create_download(self, *, object_key):
+        return DownloadInstruction("https://example.test/download", timedelta(minutes=5))
     def delete(self, object_key):
         self.deleted = object_key
 
@@ -55,3 +60,14 @@ def test_r2_signed_put_binds_checksum_header_and_head_returns_hex():
     assert (operation, expires_in, method) == ("put_object", 42, "PUT")
     assert params["ChecksumSHA256"] == sha256_hex_to_s3_base64("a" * 64)
     assert adapter.head("private/u/a/raw").checksum_sha256 == "a" * 64
+
+
+def test_r2_signed_get_is_short_lived_and_never_public():
+    adapter = object.__new__(R2ObjectStorageProvider)
+    adapter.bucket = "private-recordings"
+    adapter.download_ttl_seconds = 300
+    adapter.client = _R2Client()
+    instruction = adapter.create_download(object_key="private/u/a/raw")
+    operation, params, expires_in, method = adapter.client.presign
+    assert (operation, params, expires_in, method) == ("get_object", {"Bucket": "private-recordings", "Key": "private/u/a/raw"}, 300, "GET")
+    assert instruction.expires_in == timedelta(minutes=5)

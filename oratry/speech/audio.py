@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import audioop
 import math
+import struct
 import wave
 from pathlib import Path
 from statistics import mean, median, pstdev
@@ -41,6 +41,37 @@ def _pitch_hz(samples: list[int], sample_rate: int) -> float | None:
     return sample_rate / best_lag if best_score >= 0.30 else None
 
 
+def _pcm_mono_samples(raw: bytes, width: int, channels: int) -> list[int]:
+    """Decode little-endian PCM WAV without the removed stdlib ``audioop``.
+
+    ``wave`` exposes uncompressed PCM bytes.  WAV uses unsigned 8-bit samples
+    and signed two's-complement samples at wider widths.  Averaging channels is
+    sufficient for the coarse deterministic measurements in this module; it is
+    deliberately not a media transcoder.
+    """
+    if width == 1:
+        samples = [value - 128 for value in raw]
+    elif width == 2:
+        samples = list(struct.unpack(f"<{len(raw) // 2}h", raw))
+    elif width == 3:
+        samples = []
+        for index in range(0, len(raw) - 2, 3):
+            value = raw[index] | (raw[index + 1] << 8) | (raw[index + 2] << 16)
+            samples.append(value - (1 << 24) if value & (1 << 23) else value)
+    elif width == 4:
+        samples = list(struct.unpack(f"<{len(raw) // 4}i", raw))
+    else:  # Kept defensive: the WAV validation is the public contract.
+        raise ValueError("unsupported PCM sample width")
+
+    if channels == 1:
+        return samples
+    return [round((samples[index] + samples[index + 1]) / 2) for index in range(0, len(samples) - 1, 2)]
+
+
+def _rms(samples: list[int]) -> float:
+    return math.sqrt(sum(value * value for value in samples) / len(samples)) if samples else 0.0
+
+
 def analyze_wav(audio_path: Path, transcript: Transcript | None = None) -> tuple[Metric, ...]:
     """Measure PCM WAV audio. Decode/normalize other containers with FFmpeg upstream."""
     with wave.open(str(audio_path), "rb") as handle:
@@ -49,29 +80,23 @@ def analyze_wav(audio_path: Path, transcript: Transcript | None = None) -> tuple
             raise ValueError("analyze_wav requires uncompressed 8/16/24/32-bit PCM WAV")
         raw = handle.readframes(frame_count)
     duration = frame_count / sample_rate if sample_rate else 0.0
-    # WAV stores 8-bit PCM as unsigned while audioop's amplitude operations use
-    # signed samples. Translate it before RMS calculation.
-    if width == 1:
-        raw = audioop.bias(raw, width, -128)
-    mono = audioop.tomono(raw, width, 0.5, 0.5) if channels == 2 else raw
+    mono = _pcm_mono_samples(raw, width, channels)
     samples_per_frame = max(1, round(sample_rate * _FRAME_SECONDS))
-    bytes_per_frame = samples_per_frame * width
     energies: list[float] = []
     voiced: list[bool] = []
     pitches: list[float] = []
-    for start in range(0, len(mono), bytes_per_frame):
-        chunk = mono[start:start + bytes_per_frame]
-        if len(chunk) < width:
+    for start in range(0, len(mono), samples_per_frame):
+        chunk = mono[start:start + samples_per_frame]
+        if not chunk:
             continue
-        rms = audioop.rms(chunk, width)
+        rms = _rms(chunk)
         full_scale = float(1 << (8 * width - 1))
         dbfs = 20 * math.log10(max(rms, 1) / full_scale)
         energies.append(dbfs)
         is_voiced = dbfs >= _SPEECH_THRESHOLD_DBFS
         voiced.append(is_voiced)
         if is_voiced and width == 2:
-            values = list(memoryview(chunk).cast("h"))
-            estimate = _pitch_hz(values, sample_rate)
+            estimate = _pitch_hz(chunk, sample_rate)
             if estimate:
                 pitches.append(estimate)
     frame_duration = duration / len(voiced) if voiced else 0.0

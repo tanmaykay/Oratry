@@ -167,8 +167,9 @@ def _validate_evidence(evidence: Sequence[Mapping[str, Any]], input_: Evaluation
 def validate_evaluation(result: Mapping[str, Any], input_: EvaluationInput) -> dict[str, Any]:
     """Validate shape, bounds, exact evidence, and deterministic total.
 
-    This intentionally rejects provider output rather than repairing it. Callers
-    should retry with the validation error or mark the analysis run failed.
+    Callers may deterministically canonicalize a unique verbatim transcript
+    coordinate before this boundary; all semantic and ambiguous evidence is
+    rejected rather than repaired.
     """
     required = set(json_schema()["required"])
     if set(result) != required:

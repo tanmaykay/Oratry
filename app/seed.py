@@ -5,6 +5,8 @@ from sqlalchemy import select
 from app.core import password_hash
 from app.db import SessionLocal
 from app.models import Assignment, Challenge, User, VocabularyItem
+from app.personalization.catalog import PRACTICE_CATALOG
+from app.services import CurriculumService
 
 
 def main() -> None:
@@ -20,19 +22,10 @@ def main() -> None:
             db.add(user)
             db.flush()
 
-        challenge = db.scalar(select(Challenge).where(Challenge.active.is_(True)))
-        if challenge is None:
-            challenge = Challenge(
-                prompt="Describe one change your community should make and defend it.",
-                preparation_guidance="Prepare a claim, two reasons, and a conclusion.",
-                target_skills=["structure", "fluency"],
-                difficulty=1,
-                target_duration_seconds=120,
-                rubric_version="1",
-                active=True,
-            )
-            db.add(challenge)
-            db.flush()
+        curriculum = CurriculumService(db)
+        for candidate in PRACTICE_CATALOG:
+            curriculum._ensure_challenge(candidate)
+        challenge = db.get(Challenge, PRACTICE_CATALOG[0].id)
 
         if db.scalar(select(Assignment).where(Assignment.user_id == user.id)) is None:
             db.add(Assignment(user_id=user.id, challenge_id=challenge.id, reason="local_preview"))

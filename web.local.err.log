@@ -1,0 +1,206 @@
+ ⚠ Cross origin request detected from 127.0.0.1 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+(node:31712) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ⨯ ./features/results/results.tsx
+Error: 
+
+Caused by:
+    0: Failed to read source code from C:\Users\write\OneDrive\Desktop\Development\Oratry\features\results\results.tsx
+    1: The system cannot find the file specified. (os error 2)
+
+Import trace for requested module:
+./features/results/results.tsx
+./features/app/oratry-app.tsx
+ ⨯ ./features/results/results.tsx
+Error: 
+
+Caused by:
+    0: Failed to read source code from C:\Users\write\OneDrive\Desktop\Development\Oratry\features\results\results.tsx
+    1: The system cannot find the file specified. (os error 2)
+
+Import trace for requested module:
+./features/results/results.tsx
+./features/app/oratry-app.tsx
+ ⚠ ./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[3]!./app/globals.css
+Warning
+
+(3:7281) autoprefixer: start value has mixed support, consider using flex-start instead
+
+Import trace for requested module:
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[3]!./app/globals.css
+./app/globals.css
+
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[3]!./app/globals.css
+Warning
+
+(3:8938) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[3]!./app/globals.css
+./app/globals.css
+
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[3]!./app/globals.css
+Warning
+
+(3:9018) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[10].use[3]!./app/globals.css
+./app/globals.css
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\webpack\loaders\css-loader\src\index.js??ruleSet[1].rules[14].oneOf[10].use[2]!C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\webpack\loaders\postcss-loader\src\index.js??ruleSet[1].rules[14].oneOf[10].use[3]!C:\Users\write\OneDrive\Desktop\Development\Oratry\app\globals.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 3 items } -> webpack/lib/ModuleWarning -> Warning
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '972036365'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '972036365'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '972036365'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  digest: '2980464769'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+[TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  page: '/activate'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '972036365'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '972036365'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '972036365'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  digest: '2980464769'
+}
+ ⨯ Error: Could not find the module "C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\next-devtools\userspace\app\segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1151659885'
+}
+[TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  page: '/activate'
+}
+ ⨯ Error: Cannot find module './778.js'
+Require stack:
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\webpack-runtime.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\activate\page.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\require.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\load-components.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\utils.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\options.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\index.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\next-config-ts\transpile-config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\next.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\lib\start-server.js
+    at <unknown> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\page.js:2:7413)
+    at Object.<anonymous> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\page.js:2:7462) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [Array],
+  page: '/'
+}
+ ⨯ Error: Cannot find module './778.js'
+Require stack:
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\webpack-runtime.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\pages\_document.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\require.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\load-components.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\utils.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\options.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\index.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\next-config-ts\transpile-config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\next.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\lib\start-server.js
+    at <unknown> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\activate\page.js:2:7416)
+    at Object.<anonymous> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\activate\page.js:2:7465) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [Array],
+  page: '/activate'
+}
+ ⨯ Error: Cannot find module './778.js'
+Require stack:
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\webpack-runtime.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\pages\_document.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\require.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\load-components.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\utils.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\options.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\index.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\next-config-ts\transpile-config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\next.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\lib\start-server.js
+    at <unknown> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\page.js:2:7413)
+    at Object.<anonymous> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\page.js:2:7462) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [Array],
+  page: '/'
+}
+ ⨯ Error: Cannot find module './778.js'
+Require stack:
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\webpack-runtime.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\pages\_document.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\require.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\load-components.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\utils.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\options.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\swc\index.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\build\next-config-ts\transpile-config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\config.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\next.js
+- C:\Users\write\OneDrive\Desktop\Development\Oratry\node_modules\next\dist\server\lib\start-server.js
+    at <unknown> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\page.js:2:7413)
+    at Object.<anonymous> (C:\Users\write\OneDrive\Desktop\Development\Oratry\.next\server\app\page.js:2:7462) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [Array],
+  page: '/'
+}

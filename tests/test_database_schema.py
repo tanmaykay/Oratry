@@ -17,6 +17,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
+
+from app.analysis_worker import claim_next_job, enqueue_analysis, renew_lease
+from app.models import Assignment, Attempt, Challenge, User
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,21 +71,31 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
         "alembic_version", "analysis_results", "analysis_runs", "attempts",
         "challenge_assignments", "challenges", "recordings", "skill_evidence",
         "skill_states", "users", "vocabulary_items", "email_verification_challenges",
-        "dictionary_entries",
+        "dictionary_entries", "analysis_jobs",
     }
     assert set(inspector.get_table_names(schema="public")) == expected_tables
 
     recording_columns = {column["name"]: column for column in inspector.get_columns("recordings")}
-    assert {"retention_deadline", "deletion_status", "deleted_at", "deletion_error"} <= recording_columns.keys()
+    assert {
+        "retention_deadline", "deletion_status", "deletion_attempt_count",
+        "deletion_available_at", "deletion_lease_expires_at", "deleted_at", "deletion_error",
+    } <= recording_columns.keys()
     assert recording_columns["retention_deadline"]["type"].timezone is True
+    assert recording_columns["deletion_available_at"]["type"].timezone is True
+    assert recording_columns["deletion_lease_expires_at"]["type"].timezone is True
     assert recording_columns["deleted_at"]["type"].timezone is True
     assert recording_columns["deletion_status"]["nullable"] is False
+    assert recording_columns["deletion_attempt_count"]["nullable"] is False
 
     user_columns = {column["name"]: column for column in inspector.get_columns("users")}
     assert user_columns["preferences"]["type"].__class__.__name__ == "JSON"
     assert user_columns["created_at"]["type"].timezone is True
     assert user_columns["email_verified_at"]["type"].timezone is True
     assert user_columns["email_verified_at"]["nullable"] is True
+
+    challenge_columns = {column["name"]: column for column in inspector.get_columns("challenges")}
+    assert challenge_columns["target_vocabulary"]["type"].__class__.__name__ == "JSON"
+    assert challenge_columns["target_vocabulary"]["nullable"] is False
 
     verification_columns = {
         column["name"]: column
@@ -109,6 +123,10 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
 
     assert any(index["name"] == "ix_users_email" and index["unique"] for index in inspector.get_indexes("users"))
     assert any(index["name"] == "ix_recordings_retention_deadline" for index in inspector.get_indexes("recordings"))
+    recording_indexes = {index["name"]: index for index in inspector.get_indexes("recordings")}
+    assert recording_indexes["ix_recordings_deletion_claim"]["column_names"] == [
+        "deletion_status", "deletion_available_at", "retention_deadline"
+    ]
     assignment_indexes = {index["name"]: index for index in inspector.get_indexes("challenge_assignments")}
     assert assignment_indexes["uq_challenge_assignments_baseline_user_sequence"]["unique"] is True
     assert assignment_indexes["uq_challenge_assignments_baseline_user_challenge"]["unique"] is True
@@ -135,6 +153,28 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
         for foreign_key in vocabulary_foreign_keys
     }
 
+    analysis_job_columns = {column["name"]: column for column in inspector.get_columns("analysis_jobs")}
+    assert {
+        "attempt_id", "event_key", "stage", "stage_version", "payload", "status",
+        "attempt_count", "available_at", "lease_owner", "lease_expires_at",
+        "last_error_code", "created_at", "updated_at", "completed_at",
+    } <= analysis_job_columns.keys()
+    assert all(
+        analysis_job_columns[name]["type"].timezone is True
+        for name in ("available_at", "lease_expires_at", "created_at", "updated_at", "completed_at")
+    )
+    analysis_job_foreign_keys = inspector.get_foreign_keys("analysis_jobs")
+    assert {(foreign_key["constrained_columns"][0], foreign_key["referred_table"]) for foreign_key in analysis_job_foreign_keys} == {
+        ("attempt_id", "attempts")
+    }
+    analysis_job_indexes = {index["name"]: index for index in inspector.get_indexes("analysis_jobs")}
+    assert analysis_job_indexes["ix_analysis_jobs_claim"]["column_names"] == ["status", "available_at", "created_at"]
+    assert analysis_job_indexes["ix_analysis_jobs_lease_expires_at"]["column_names"] == ["lease_expires_at"]
+    assert ("event_key",) in {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("analysis_jobs")
+    }
+
 
 def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_postgres_database) -> None:
     engine = migrated_postgres_database
@@ -149,9 +189,9 @@ def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_
             "timezone": "Asia/Kolkata", "notifications": True,
         })})
         connection.execute(text("""
-            INSERT INTO challenges (id, version, prompt, preparation_guidance, target_skills, difficulty,
+            INSERT INTO challenges (id, version, prompt, preparation_guidance, target_skills, target_vocabulary, difficulty,
                                     target_duration_seconds, rubric_version, active)
-            VALUES ('00000000-0000-0000-0000-000000000002', 1, 'Prompt', 'Guidance', '["fluency"]'::json,
+            VALUES ('00000000-0000-0000-0000-000000000002', 1, 'Prompt', 'Guidance', '["fluency"]'::json, '["clear"]'::json,
                     1, 120, '1', true)
         """))
         connection.execute(text("""
@@ -239,16 +279,27 @@ def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_
         """), {"created_at": created_at, "retention_deadline": retention_deadline})
 
         row = connection.execute(text("""
-                SELECT users.preferences, users.created_at, recordings.retention_deadline,
+                SELECT users.preferences, users.created_at, challenges.target_vocabulary, recordings.retention_deadline,
                        recordings.deletion_status
             FROM users JOIN challenge_assignments ON challenge_assignments.user_id = users.id
+            JOIN challenges ON challenges.id = challenge_assignments.challenge_id
             JOIN attempts ON attempts.assignment_id = challenge_assignments.id
             JOIN recordings ON recordings.attempt_id = attempts.id
         """)).one()
         assert row.preferences == {"timezone": "Asia/Kolkata", "notifications": True}
         assert row.created_at == created_at
+        assert row.target_vocabulary == ["clear"]
         assert row.retention_deadline == retention_deadline
         assert row.deletion_status == "scheduled"
+        retry_state = connection.execute(text("""
+            SELECT deletion_attempt_count, deletion_available_at, deletion_lease_expires_at
+            FROM recordings WHERE id = '00000000-0000-0000-0000-000000000006'
+        """)).one()
+        assert retry_state.deletion_attempt_count == 0
+        # Scheduling code supplies this timestamp when analysis succeeds.  It
+        # is intentionally nullable for newly uploaded/unprocessed recordings.
+        assert retry_state.deletion_available_at is None
+        assert retry_state.deletion_lease_expires_at is None
 
         with pytest.raises(IntegrityError):
             with connection.begin_nested():
@@ -260,10 +311,10 @@ def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_
                 """), {"created_at": created_at})
 
         connection.execute(text("""
-            INSERT INTO challenges (id, version, prompt, preparation_guidance, target_skills, difficulty,
+            INSERT INTO challenges (id, version, prompt, preparation_guidance, target_skills, target_vocabulary, difficulty,
                                     target_duration_seconds, rubric_version, active)
             VALUES ('00000000-0000-0000-0000-000000000009', 1, 'Second prompt', 'Guidance',
-                    '["fluency"]'::json, 1, 120, '1', true)
+                    '["fluency"]'::json, '[]'::json, 1, 120, '1', true)
         """))
         connection.execute(text("""
             INSERT INTO challenge_assignments (id, user_id, challenge_id, reason, status, sequence, assigned_at)
@@ -301,3 +352,25 @@ def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_
                     VALUES ('00000000-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000004',
                             'r2', 'private/duplicate.webm', 'audio/webm', 1, repeat('b', 64), 'not_scheduled', :created_at)
                 """), {"created_at": created_at})
+
+
+def test_postgresql_claim_and_lease_fence_allow_only_the_owner(migrated_postgres_database) -> None:
+    """Exercise SKIP LOCKED claim and conditional renewal on real PostgreSQL."""
+    Local = sessionmaker(bind=migrated_postgres_database, autoflush=False)
+    with Local() as setup:
+        user = User(email="lease-fence@example.test", password_hash="hash", accepted_terms=True)
+        challenge = Challenge(prompt="Fence", preparation_guidance="Guide", target_skills=[], difficulty=1, target_duration_seconds=60)
+        setup.add_all([user, challenge]); setup.flush()
+        assignment = Assignment(user_id=user.id, challenge_id=challenge.id, reason="lease-test")
+        setup.add(assignment); setup.flush()
+        attempt = Attempt(user_id=user.id, assignment_id=assignment.id, comparison_group_id="lease-fence-group")
+        setup.add(attempt); setup.flush(); job = enqueue_analysis(setup, attempt.id)
+        setup.commit(); job_id = job.id
+    with Local() as first, Local() as second:
+        first_claim = claim_next_job(first, "postgres-owner")
+        assert first_claim is not None and first_claim.id == job_id
+        assert claim_next_job(second, "other-owner") is None
+        assert renew_lease(first, job_id, "postgres-owner", lease_seconds=60)
+        first.commit()
+        assert not renew_lease(second, job_id, "other-owner", lease_seconds=60)
+        second.rollback()
