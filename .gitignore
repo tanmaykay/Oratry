@@ -4,16 +4,42 @@ __pycache__/
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
+.pytest_cache/
 
 # Virtual environments
-.venv
+.venv/
 
 # JavaScript-generated files
 node_modules/
 .next/
 tsconfig.tsbuildinfo
 
-# Local configuration and runtime data
+# Local configuration and secrets. Keep the documented template tracked.
 .env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Local runtime data and process output
 *.db
+*.sqlite
+*.sqlite3
+*.local.log
+*.local.*.log
+*.pid
+
+# Personal ideation and scratch material. Product/architecture documentation in
+# README.md, project/, docs/, prompts/, and .agents/ remains intentionally tracked.
+/Inital_project_ideation.txt
+/ideas/
+/brainstorm/
+/scratch/
+*.ideation.md
+*.brainstorm.md
