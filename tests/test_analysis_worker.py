@@ -13,7 +13,8 @@ from app.analysis_worker import (CostEstimator, DurableAnalysisWorker,
 from oratry.evaluation import EvaluationProviderError
 from oratry.speech.providers import SpeechToTextProviderError
 from app.db import Base
-from app.models import AnalysisJob, AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, Recording, User
+from app.models import (AnalysisJob, AnalysisResult, AnalysisRun, Assignment, Attempt,
+                        Challenge, Recording, User, VocabularyItem, VocabularyObservation)
 from oratry.speech.models import Transcript, TranscriptSegment, TranscriptionUsage, WordTimestamp
 
 
@@ -102,6 +103,13 @@ def test_durable_worker_persists_versioned_evidence_and_schedules_retention(tmp_
         assert usage["llm"]["estimatedCostUsd"] == .00008
         scorecard = db.scalar(select(AnalysisResult).where(AnalysisResult.result_type == "scorecard")).payload
         assert scorecard["dimensions"]["target_vocabulary"]["input"] == {"target_count": 1, "used_count": 1}
+        item = db.scalar(select(VocabularyItem).where(VocabularyItem.user_id == user.id))
+        observation = db.scalar(select(VocabularyObservation).where(VocabularyObservation.analysis_run_id == db.scalar(select(AnalysisRun)).id))
+        assert item.word == "clear" and item.practice_status == "practicing"
+        assert observation.vocabulary_item_id == item.id and observation.normalized_word == "clear"
+        # SQLite lightweight tests do not enable foreign-key enforcement. The
+        # real PostgreSQL schema suite asserts the ON DELETE SET NULL contract.
+        db.delete(item); db.commit()
 
 
 def test_lease_fencing_and_operator_requeue_are_conditional(tmp_path):

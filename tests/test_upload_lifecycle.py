@@ -214,7 +214,7 @@ def test_comparison_returns_only_persisted_same_challenge_evidence(tmp_path):
         app.dependency_overrides.clear()
 
 
-def test_create_attempt_resumes_only_the_active_unsealed_attempt(tmp_path):
+def test_create_attempt_resumes_only_the_same_unsealed_recording_and_replaces_a_different_one(tmp_path):
     storage = FakeStorage()
     client, _ = _client(tmp_path, storage)
     try:
@@ -225,14 +225,38 @@ def test_create_attempt_resumes_only_the_active_unsealed_attempt(tmp_path):
             second = client.post(f"/v1/assignments/{assignment_id}/attempts", headers=headers,
                                  json={"checksumSha256": "b" * 64}).json()
             assert second["id"] == first["id"]
-            changed_type = client.post(f"/v1/assignments/{assignment_id}/attempts", headers=headers,
-                                       json={"contentType": "audio/mp4", "checksumSha256": "b" * 64})
-            assert changed_type.status_code == 409
-            assert changed_type.json()["code"] == "upload_media_type_locked"
             changed_checksum = client.post(f"/v1/assignments/{assignment_id}/attempts", headers=headers,
                                            json={"checksumSha256": "a" * 64})
-            assert changed_checksum.status_code == 409
-            assert changed_checksum.json()["code"] == "upload_checksum_locked"
+            assert changed_checksum.status_code == 201
+            assert changed_checksum.json()["id"] != first["id"]
+            changed_type = client.post(f"/v1/assignments/{assignment_id}/attempts", headers=headers,
+                                       json={"contentType": "audio/mp4", "checksumSha256": "c" * 64})
+            assert changed_type.status_code == 201
+            assert changed_type.json()["id"] != changed_checksum.json()["id"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_hiding_a_review_removes_it_from_progress_but_retains_immutable_evidence(tmp_path):
+    storage = FakeStorage()
+    client, local = _client(tmp_path, storage)
+    try:
+        with client:
+            headers, assignment_id = _headers_and_assignment(client)
+            attempt = client.post(
+                f"/v1/assignments/{assignment_id}/attempts", headers=headers, json={"checksumSha256": "b" * 64},
+            ).json()
+            with local() as db:
+                row = db.get(Attempt, attempt["id"])
+                row.status = "completed"
+                db.commit()
+
+            hidden = client.delete(f"/v1/attempts/{attempt['id']}/review", headers=headers)
+            assert hidden.status_code == 204
+            assert client.get("/v1/progress", headers=headers).json()["attempts"] == []
+            assert client.get(f"/v1/attempts/{attempt['id']}/result", headers=headers).status_code == 404
+            with local() as db:
+                assert db.get(Attempt, attempt["id"]).hidden_at is not None
     finally:
         app.dependency_overrides.clear()
 

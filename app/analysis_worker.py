@@ -14,11 +14,12 @@ from time import perf_counter
 from typing import Any, Protocol
 from uuid import uuid4
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models import (AnalysisJob, AnalysisResult, AnalysisRun, Assignment,
-                        Attempt, Challenge, Recording, SkillEvidence, SkillState)
+                        Attempt, Challenge, Recording, SkillEvidence, SkillState,
+                        VocabularyItem, VocabularyObservation)
 from app.personalization.skill_engine import SkillEvidence as ProjectionEvidence
 from app.personalization.skill_engine import SkillStateProjection, update_skill_state
 from app.scoring import build_deterministic_scorecard
@@ -261,8 +262,14 @@ def _metrics(transcript, duration_seconds: float | None, *, target_vocabulary: t
 
 def _project_skills(db: Session, attempt: Attempt, run: AnalysisRun, scorecard: dict[str, Any]) -> None:
     """Project only deterministic, measured scorecard dimensions into skills."""
+    # A silent or fragmentary response cannot be evidence of a learner's
+    # delivery/fluency skill. Keep its immutable scorecard for review, but do
+    # not let mechanics such as zero fillers artificially improve projections.
+    response_coverage = scorecard["dimensions"].get("response_coverage", {}).get("score")
+    if response_coverage is not None and response_coverage < 100:
+        return
     mapping = {
-        "fluency": ("pace", "filler_use", "immediate_repetition"),
+        "fluency": ("pace", "filler_use", "immediate_repetition", "pausing"),
         "delivery": ("timing",),
         "language": ("target_vocabulary",),
     }
@@ -293,6 +300,39 @@ def _project_skills(db: Session, attempt: Attempt, run: AnalysisRun, scorecard: 
         else:
             db.add(SkillState(user_id=attempt.user_id, skill=skill, estimated_level=projected.estimated_level,
                               confidence=projected.confidence, model_version=projected.model_version))
+
+
+def _project_vocabulary_observations(db: Session, attempt: Attempt, run: AnalysisRun,
+                                     used_target_vocabulary: object) -> None:
+    """Project deterministic target matches into the learner's Word Bank.
+
+    The projection is idempotent so evaluator retries and job recovery cannot
+    manufacture additional occurrences.
+    """
+    if not isinstance(used_target_vocabulary, (list, tuple)):
+        return
+    for word in used_target_vocabulary:
+        if not isinstance(word, str):
+            continue
+        normalized = " ".join(word.casefold().split())
+        if not normalized:
+            continue
+        observation = db.scalar(select(VocabularyObservation).where(
+            VocabularyObservation.analysis_run_id == run.id,
+            VocabularyObservation.normalized_word == normalized,
+        ))
+        if observation is not None:
+            continue
+        item = db.scalar(select(VocabularyItem).where(
+            VocabularyItem.user_id == attempt.user_id,
+            func.lower(VocabularyItem.word) == normalized,
+        ))
+        if item is None:
+            item = VocabularyItem(user_id=attempt.user_id, word=word, practice_status="practicing")
+            db.add(item)
+            db.flush()
+        db.add(VocabularyObservation(user_id=attempt.user_id, vocabulary_item_id=item.id,
+                                     analysis_run_id=run.id, normalized_word=normalized))
 
 
 class DurableAnalysisWorker:
@@ -398,6 +438,7 @@ class DurableAnalysisWorker:
                                            "recommendation": evaluation.evaluation["recommendation"],
                                            "nextExercise": evaluation.evaluation["next_exercise"]})
         _project_skills(self.db, attempt, run, scorecard)
+        _project_vocabulary_observations(self.db, attempt, run, findings.get("target_vocabulary_used", ()))
         run.status, run.current_stage = "completed", "completed"
         attempt.status, attempt.completed_at = "completed", _utcnow()
         assignment.status = "completed"
@@ -432,7 +473,11 @@ class DurableAnalysisWorker:
         attempt = self.db.get(Attempt, job.attempt_id) if job else None
         run = self.db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id == job.attempt_id, AnalysisRun.version == 1)) if job else None
         retryable, code = _failure_classification(exc)
-        if job and retryable and job.attempt_count < MAX_ATTEMPTS:
+        # A missing/unreachable object should fail quickly and visibly. It is
+        # not worth holding a learner in “analyzing” through four slow object
+        # store reads; callers can make a fresh recording instead.
+        retry_limit = 2 if code == "storage_retryable" else MAX_ATTEMPTS
+        if job and retryable and job.attempt_count < retry_limit:
             job.status, job.available_at = "queued", _utcnow() + timedelta(seconds=2 ** job.attempt_count)
             job.lease_owner, job.lease_expires_at, job.last_error_code = None, None, code
         elif job:

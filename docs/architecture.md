@@ -45,7 +45,7 @@ backend/
     observability/       # structured logs, tracing, metrics, audit helpers
 ```
 
-Frontend feature modules should mirror product surfaces: `home`, `practice`, `progress`, `vocabulary`, and `profile`, with a small shared API client, design system, auth/session support, and recorder/upload component. Product decisions remain on the server; the client may calculate transient recording duration or waveform display but must not produce authoritative metrics or scores.
+Frontend feature modules should mirror product surfaces: `home`, `practice`, `progress`, `vocabulary`, and `profile`, with a small shared API client, design system, auth/session support, and recorder/upload component. Product decisions remain on the server; the client may calculate transient recording duration or decode an owner-authorized recording into a non-persisted amplitude waveform, but must not produce authoritative metrics or scores. Waveform annotations may represent timestamped transcript evidence only; whole-attempt scores must not be portrayed as moment-level acoustic facts.
 
 ### Dependency direction
 

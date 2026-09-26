@@ -12,10 +12,10 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Mapping, Sequence
 
 
-EVALUATION_VERSION = "1.0.0"
+EVALUATION_VERSION = "1.2.0"
 SCHEMA_VERSION = "1.0.0"
-RUBRIC_VERSION = "1.0.0"
-PROMPT_VERSION = "1.0.0"
+RUBRIC_VERSION = "1.2.0"
+PROMPT_VERSION = "1.2.0"
 SCORER_VERSION = "1.0.0"
 DIMENSIONS = ("structure", "clarity", "fluency", "language", "delivery")
 WEIGHTS = {

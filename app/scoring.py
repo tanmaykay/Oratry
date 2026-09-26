@@ -12,16 +12,17 @@ from numbers import Real
 from typing import Any
 
 
-SCORECARD_VERSION = "deterministic-metrics-v1"
+SCORECARD_VERSION = "deterministic-metrics-v3"
 SCORECARD_SCALE = "0-100"
 
 # These weights apply only to available measurements.  An unavailable metric is
 # omitted from both the numerator and denominator; it is never assumed to be 0.
 _WEIGHTS = {
-    "pace": Decimal("0.30"),
-    "filler_use": Decimal("0.25"),
-    "immediate_repetition": Decimal("0.15"),
-    "timing": Decimal("0.20"),
+    "pace": Decimal("0.25"),
+    "filler_use": Decimal("0.20"),
+    "immediate_repetition": Decimal("0.12"),
+    "pausing": Decimal("0.18"),
+    "timing": Decimal("0.15"),
     "target_vocabulary": Decimal("0.10"),
 }
 
@@ -66,6 +67,18 @@ def _entry(name: str, score: int | None, *, input_: dict[str, Any], rule: str) -
     }
 
 
+def _minimum_response_words(target_duration_seconds: float | None) -> int | None:
+    """Minimum transcript coverage before delivery mechanics can influence score.
+
+    This is deliberately a low threshold (roughly half a word per target
+    second), not an expected speaking pace. It prevents silence or a token
+    fragment receiving a respectable score merely because it has no fillers.
+    """
+    if target_duration_seconds is None or target_duration_seconds <= 0:
+        return None
+    return max(10, int(round(target_duration_seconds * 0.5)))
+
+
 def build_deterministic_scorecard(
     metrics: Mapping[str, Any],
     *,
@@ -104,6 +117,18 @@ def build_deterministic_scorecard(
     )
 
     actual_duration = _number(metrics.get("duration_seconds"))
+    pause_seconds = _number(metrics.get("long_pause_seconds"))
+    pause_ratio = None
+    pause_score = None
+    if pause_seconds is not None and actual_duration is not None and actual_duration > 0:
+        pause_ratio = pause_seconds / actual_duration
+        pause_score = _linear_descending(pause_ratio, good_at_or_below=0.05, poor_at_or_above=0.35)
+    dimensions["pausing"] = _entry(
+        "pausing", pause_score,
+        input_={"long_pause_seconds": pause_seconds, "duration_seconds": actual_duration, "long_pause_ratio": pause_ratio},
+        rule="100 when internal pauses of at least 1.5 seconds occupy at most 5% of the response; linearly declines to 20 at 35%. Brief rhetorical pauses are not penalized.",
+    )
+
     target_duration = _number(target_duration_seconds)
     timing_score = None
     ratio = None
@@ -134,17 +159,37 @@ def build_deterministic_scorecard(
         rule="Exact normalized target-word matches divided by assigned target words; unavailable when none are assigned.",
     )
 
-    available = {name: item for name, item in dimensions.items() if item["score"] is not None}
+    word_count = _number(metrics.get("word_count"))
+    minimum_words = _minimum_response_words(target_duration)
+    response_coverage = None
+    if word_count is not None and minimum_words is not None:
+        response_coverage = _round_score(100 * min(1, word_count / minimum_words))
+    dimensions["response_coverage"] = _entry(
+        "response_coverage", response_coverage,
+        input_={"word_count": word_count, "minimum_word_count": minimum_words},
+        rule="Overall score is capped by transcript coverage: at least max(10 words, 0.5 words per target second) is required before delivery mechanics can receive full credit.",
+    )
+
+    # Response coverage is a gate, not a weighted quality dimension. It must
+    # therefore be excluded from the denominator as well as the numerator.
+    available = {name: item for name, item in dimensions.items()
+                 if name in _WEIGHTS and item["score"] is not None}
     total_weight = sum(_WEIGHTS[name] for name in available)
     overall = None
     if total_weight:
         total = sum(Decimal(item["score"]) * _WEIGHTS[name] for name, item in available.items()) / total_weight
         overall = int(total.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    # The gate is intentionally outside the metric-quality weights: pace,
+    # fillers and repetitions are meaningless as a quality score when the
+    # learner has supplied no substantive transcript.
+    if overall is not None and response_coverage is not None:
+        overall = min(overall, response_coverage)
     return {
         "scorecardVersion": SCORECARD_VERSION,
         "scale": SCORECARD_SCALE,
         "overall": overall,
-        "coverage": {"measuredDimensions": len(available), "availableWeight": float(total_weight)},
+        "coverage": {"measuredDimensions": len(available), "availableWeight": float(total_weight),
+                     "responseCoverageCap": response_coverage},
         "dimensions": dimensions,
         "provenance": {
             "source": "deterministic_measurements_only",

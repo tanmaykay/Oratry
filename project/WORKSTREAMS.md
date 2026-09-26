@@ -24,8 +24,8 @@ PostgreSQL + auth/baseline (DONE) -> private R2 upload (DONE) -> durable analysi
 | W10 | Integration | DONE | Configurable retention scheduler/worker, retry/lease audit lifecycle, and operations documentation. |
 | W14/W15/W16 | Database, Backend, Frontend | DONE | Activation links, account surfaces, dictionary-backed vocabulary, and hardening tests. |
 | W18 | Learning | DONE | Future curriculum taxonomy and catalog direction. |
-| W12 | Code review | RELEASE GATE | Cross-workstream review; Stage 1 is approved pending configured-provider canary. |
+| W12 | Code review | DONE | Cross-workstream review; configured-provider functional canary and repository operational verification passed. |
 
 ## Active work
 
-`V1-012` is the next primary implementation task: build a consented, challenge-specific calibration set and versioned rubrics before changing scoring or coaching behavior. V1-008 operational deployment work continues in parallel but depends on target-environment configuration. Cost accounting is explicitly deferred to V1-011; it is not a blocker for the learning-loop work. The Architect owns global documentation, integration, ADRs, and release decisions.
+`V1-012` is the next primary implementation task: build a consented, challenge-specific calibration set and versioned rubrics before changing scoring or coaching behavior. Target-environment pilot verification is V1-016 and depends on a hosting/monitoring selection. Cost accounting is explicitly deferred to V1-011; it is not a blocker for the learning-loop work. The Architect owns global documentation, integration, ADRs, and release decisions.

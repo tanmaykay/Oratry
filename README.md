@@ -12,6 +12,8 @@ transcription, deterministic scoring, and a provider-configured LLM evaluator.
 ## What works today
 
 - Account signup, email activation, sign-in, profile, onboarding, and baseline assignment.
+- Configuration-gated Google sign-in using OAuth authorization code + PKCE; the
+  API verifies the Google identity and hands the browser a one-time login code.
 - Browser recording and direct signed upload to a private R2 bucket.
 - Durable PostgreSQL-backed analysis jobs, Deepgram word timestamps, deterministic
   transcript metrics, Gemini structured evaluation, scoring, coaching, and skill evidence.
@@ -102,6 +104,16 @@ For local activation links, use `EMAIL_PROVIDER=development_outbox` and retrieve
 the current link from `http://127.0.0.1:8000/v1/auth/development-outbox`.
 Production email delivery requires Resend plus a verified sender domain.
 
+### R2 browser CORS
+
+The bucket remains private, but browser recording needs signed `PUT` and the
+interactive waveform needs a signed `GET`. Configure the R2 bucket CORS policy
+with `http://127.0.0.1:3000` (and the deployed web origin) in `AllowedOrigins`,
+`GET`, `PUT`, and `HEAD` in `AllowedMethods`, and `Content-Type` plus
+`x-amz-checksum-sha256` in `AllowedHeaders`. A missing signed-GET CORS rule does
+not prevent ordinary private playback, but it prevents browser waveform
+decoding; the review surfaces that distinction explicitly.
+
 ## Challenge catalog and vocabulary targets
 
 The active catalog is curated in `app/personalization/catalog.py`. Every active
@@ -134,6 +146,7 @@ $env:ORATRY_POSTGRES_TEST_DATABASE_URL = $env:TEST_DATABASE_URL
 - [Analysis worker operations](docs/analysis-worker-operations.md)
 - [Retention worker operations](docs/retention-operations.md)
 - [Production operations runbook](docs/production-operations.md)
+- [Pilot deployment checklist](docs/pilot-deployment.md)
 - [Architecture](docs/architecture.md)
 - [API contracts](docs/api-contracts.md)
 - [Architecture decisions](docs/adr/)

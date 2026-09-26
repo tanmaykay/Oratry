@@ -34,6 +34,7 @@ credentials/
 *.local.log
 *.local.*.log
 *.pid
+.codex-remote-attachments/
 
 # Personal ideation and scratch material. Product/architecture documentation in
 # README.md, project/, docs/, prompts/, and .agents/ remains intentionally tracked.

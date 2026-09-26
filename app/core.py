@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     activation_resend_max_per_hour: int = 5
     resend_api_key: str | None = None
     resend_from_address: str | None = None
+    web_app_url: str = "http://127.0.0.1:3000"
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    google_oauth_redirect_uri: str = "http://127.0.0.1:8000/v1/auth/google/callback"
+    oauth_handoff_minutes: int = 5
     dictionary_provider: str = "free_dictionary_api"
     dictionary_cache_hours: int = 24 * 7
     # Analysis worker operations and provider-price estimates.  Prices are
@@ -68,6 +73,8 @@ class Settings(BaseSettings):
             raise ValueError("RECORDING_RETENTION_HOURS must be greater than zero")
         if self.activation_token_minutes <= 0:
             raise ValueError("ACTIVATION_TOKEN_MINUTES must be greater than zero")
+        if self.oauth_handoff_minutes <= 0 or self.oauth_handoff_minutes > 15:
+            raise ValueError("OAUTH_HANDOFF_MINUTES must be between 1 and 15")
         if self.activation_resend_min_seconds < 0 or self.activation_resend_max_per_hour <= 0:
             raise ValueError("Activation resend limits must be positive")
         if self.dictionary_cache_hours <= 0:
@@ -96,6 +103,8 @@ class Settings(BaseSettings):
                 raise ValueError("EMAIL_PROVIDER=development_outbox is only allowed in local/test environments")
             if self.email_provider.casefold() == "resend" and not (self.resend_api_key and self.resend_from_address):
                 raise ValueError("RESEND_API_KEY and RESEND_FROM_ADDRESS are required when EMAIL_PROVIDER=resend")
+            if bool(self.google_oauth_client_id) != bool(self.google_oauth_client_secret):
+                raise ValueError("GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must be configured together")
         return self
 settings = Settings()
 password_hash = PasswordHash.recommended()

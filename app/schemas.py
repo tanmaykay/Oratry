@@ -4,6 +4,7 @@ class Camel(BaseModel): model_config=ConfigDict(alias_generator=lambda s: ''.joi
 class SignUp(Camel): email: EmailStr; password: str=Field(min_length=8,max_length=128); accepted_terms: bool
 class SignIn(Camel): email: EmailStr; password: str
 class ActivationResend(Camel): email: EmailStr
+class OAuthCodeExchange(Camel): code: str = Field(min_length=20, max_length=512)
 class Preferences(Camel): preferences: dict
 class CreateAttempt(Camel):
     """Preflight binds one recording checksum and media type to a signed upload."""

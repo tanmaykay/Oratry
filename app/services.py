@@ -242,10 +242,29 @@ class CurriculumService:
     def _ensure_challenge(self, candidate: ChallengeCandidate) -> Challenge:
         challenge = self.db.get(Challenge, candidate.id)
         if challenge is None:
-            challenge = Challenge(**self._candidate_values(candidate))
-            self.db.add(challenge)
-            self.db.flush()
+            # Baseline creation can be requested concurrently by the browser's
+            # bootstrap calls. Isolate the catalogue insert in a savepoint so a
+            # competing request that has just created the same stable ID does
+            # not poison the outer assignment transaction.
+            try:
+                with self.db.begin_nested():
+                    challenge = Challenge(**self._candidate_values(candidate))
+                    self.db.add(challenge)
+                    self.db.flush()
+            except IntegrityError as exc:
+                if not self._is_challenge_uniqueness_error(exc):
+                    raise
+                challenge = self.db.get(Challenge, candidate.id)
+                if challenge is None:
+                    raise
         return challenge
+
+    @staticmethod
+    def _is_challenge_uniqueness_error(exc: IntegrityError) -> bool:
+        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        return constraint_name == "challenges_pkey" or any(marker in str(exc.orig).lower() for marker in (
+            "challenges_pkey", "unique constraint failed: challenges.id",
+        ))
 
     def start_baseline(self, user_id: str) -> list[Assignment]:
         """Create the fixed baseline once, or return the persisted sequence."""

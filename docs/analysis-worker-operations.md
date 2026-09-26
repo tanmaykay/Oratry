@@ -31,6 +31,10 @@ are conditional on that token and an unexpired lease. A stale worker therefore
 cannot overwrite a later worker's state. The worker renews before and after
 external storage/STT/evaluator boundaries. Deepgram prerecorded requests are
 bounded at 60 seconds; `ANALYSIS_JOB_LEASE_SECONDS` has a 75-second minimum.
+Deepgram requests explicitly enable `filler_words=true`, because the provider
+otherwise strips `um` and `uh` from a conventional transcript. Timestamped
+internal word gaps provide the portable V1 pause metrics for browser-recorded
+WebM; they are labelled separately from acoustic silence analysis.
 The configured evaluator uses `ANALYSIS_LLM_TIMEOUT_SECONDS`, which must be below the lease. OpenAI SDK retries are disabled for worker calls; Gemini uses a single bounded HTTP request. Durable job retry is the only retry authority.
 
 Transient STT transport failures and evaluator transport failures retry with

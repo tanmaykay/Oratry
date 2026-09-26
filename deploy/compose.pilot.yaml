@@ -1,0 +1,30 @@
+# Target-environment template. PostgreSQL is intentionally external/managed.
+# Copy the deployment environment file outside this repository; never put
+# credentials in this Compose file.
+services:
+  api:
+    build:
+      context: ..
+    env_file: /etc/oratry/production.env
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  analysis-worker:
+    build:
+      context: ..
+    env_file: /etc/oratry/production.env
+    command: ["python", "-m", "app.worker", "--worker-id", "pilot-analysis-1"]
+    restart: unless-stopped
+
+  retention-worker:
+    build:
+      context: ..
+    env_file: /etc/oratry/production.env
+    command: ["python", "-m", "app.retention_worker", "--poll-seconds", "60"]
+    restart: unless-stopped

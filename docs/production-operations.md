@@ -19,6 +19,16 @@ has passed for the deployed release. Every `run_once` claim has a unique lease
 token; PostgreSQL `SKIP LOCKED` and conditional lease renewal prevent a stale
 worker from completing another worker's job.
 
+The repository CI job runs the same migration chain and a concurrent,
+independent-session claim race against PostgreSQL. Before deploying a release,
+run the database suite against a freshly created disposable database:
+
+```powershell
+$env:ORATRY_POSTGRES_TEST = "1"
+$env:ORATRY_POSTGRES_TEST_DATABASE_URL = $env:TEST_DATABASE_URL
+.\.venv\Scripts\python.exe -m pytest -q tests/test_database_schema.py
+```
+
 The retention worker may be a single supervised replica for V1. Its database
 lease makes retries restart-safe, but duplicate replicas are not a substitute
 for alerting on overdue deletion.

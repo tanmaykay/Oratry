@@ -87,11 +87,16 @@ class R2ObjectStorageProvider:
         self.download_ttl_seconds = download_ttl_seconds
         try:
             import boto3
+            from botocore.config import Config
         except ImportError as exc:  # pragma: no cover - dependency installation is runtime-specific
             raise RuntimeError("boto3 is required for the Cloudflare R2 adapter") from exc
         self.client = boto3.client(
             "s3", endpoint_url=endpoint_url, aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key, region_name="auto",
+            # The durable worker, not the SDK, owns retries. A single stalled
+            # R2 call must not consume the worker lease or hide recovery from
+            # the learner for a minute.
+            config=Config(connect_timeout=5, read_timeout=10, retries={"max_attempts": 0}),
         )
 
     def create_upload(self, *, object_key: str, content_type: str, max_bytes: int, checksum_sha256: str) -> UploadInstruction:

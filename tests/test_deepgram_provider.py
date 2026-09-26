@@ -77,7 +77,7 @@ class DeepgramMappingTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["filler_rate"].value, 100 / 3)
         for metric in metrics.values():
             self.assertEqual(metric.measurement_kind, MeasurementKind.DETERMINISTIC)
-            self.assertEqual(metric.algorithm_version, "transcript-rules-v1")
+            self.assertEqual(metric.algorithm_version, "transcript-rules-v2")
             self.assertIn(metric.reliability, (Reliability.HIGH, Reliability.MEDIUM, Reliability.LOW, Reliability.UNAVAILABLE))
 
 
@@ -99,6 +99,7 @@ class DeepgramRequestTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "POST")
         self.assertIn("model=nova-3", request.full_url)
         self.assertIn("utterances=true", request.full_url)
+        self.assertIn("filler_words=true", request.full_url)
         self.assertIn("language=en", request.full_url)
         self.assertEqual(request.get_header("Authorization"), "Token test-key")
         self.assertEqual(transcript.provider, "deepgram")

@@ -11,6 +11,34 @@ class User(Base):
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); email: Mapped[str]=mapped_column(String(320),unique=True,index=True); password_hash: Mapped[str]=mapped_column(String(255)); accepted_terms: Mapped[bool]=mapped_column(Boolean); preferences: Mapped[dict]=mapped_column(JSON,default=dict); email_verified_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
 
 
+class ExternalIdentity(Base):
+    """Verified external subject bound to one Oratry account."""
+    __tablename__ = "external_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject", name="uq_external_identities_provider_subject"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class OAuthLoginCode(Base):
+    """Short-lived one-time browser handoff; its plaintext code is never stored."""
+    __tablename__ = "oauth_login_codes"
+    __table_args__ = (
+        UniqueConstraint("code_digest", name="uq_oauth_login_codes_code_digest"),
+        CheckConstraint("length(code_digest) = 64", name="ck_oauth_login_codes_digest_length"),
+        CheckConstraint("expires_at > created_at", name="ck_oauth_login_codes_expiry_after_creation"),
+        Index("ix_oauth_login_codes_expires_at", "expires_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
 class EmailVerificationChallenge(Base):
     """One-time email activation evidence; the plaintext token is never persisted."""
 
@@ -68,7 +96,7 @@ class Assignment(Base):
     id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); user_id: Mapped[str]=mapped_column(ForeignKey("users.id"),index=True); challenge_id: Mapped[str]=mapped_column(ForeignKey("challenges.id")); reason: Mapped[str]=mapped_column(String(80),default="recommended"); status: Mapped[str]=mapped_column(String(30),default="assigned"); sequence: Mapped[int]=mapped_column(Integer,default=1); assigned_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
 class Attempt(Base):
     __tablename__="attempts"
-    id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); user_id: Mapped[str]=mapped_column(ForeignKey("users.id"),index=True); assignment_id: Mapped[str]=mapped_column(ForeignKey("challenge_assignments.id")); status: Mapped[str]=mapped_column(String(30),default="uploading"); comparison_group_id: Mapped[str]=mapped_column(String(36),default=uid); retry_of_attempt_id: Mapped[str|None]=mapped_column(ForeignKey("attempts.id"),nullable=True); ordinal: Mapped[int]=mapped_column(Integer,default=1); object_key: Mapped[str|None]=mapped_column(String(512),nullable=True); checksum: Mapped[str|None]=mapped_column(String(128),nullable=True); duration_seconds: Mapped[float|None]=mapped_column(Float,nullable=True); content_type: Mapped[str|None]=mapped_column(String(100),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now); sealed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); completed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    id: Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); user_id: Mapped[str]=mapped_column(ForeignKey("users.id"),index=True); assignment_id: Mapped[str]=mapped_column(ForeignKey("challenge_assignments.id")); status: Mapped[str]=mapped_column(String(30),default="uploading"); comparison_group_id: Mapped[str]=mapped_column(String(36),default=uid); retry_of_attempt_id: Mapped[str|None]=mapped_column(ForeignKey("attempts.id"),nullable=True); ordinal: Mapped[int]=mapped_column(Integer,default=1); object_key: Mapped[str|None]=mapped_column(String(512),nullable=True); checksum: Mapped[str|None]=mapped_column(String(128),nullable=True); duration_seconds: Mapped[float|None]=mapped_column(Float,nullable=True); content_type: Mapped[str|None]=mapped_column(String(100),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now); sealed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); completed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True); hidden_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True,index=True)
 class Recording(Base):
     """Raw-media metadata and its independently retryable retention lifecycle."""
     __tablename__ = "recordings"
@@ -182,6 +210,27 @@ class VocabularyItem(Base):
     dictionary_entry_id: Mapped[str | None] = mapped_column(
         ForeignKey("dictionary_entries.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+
+class VocabularyObservation(Base):
+    """Immutable evidence that a learner used a challenge-owned target term."""
+
+    __tablename__ = "vocabulary_observations"
+    __table_args__ = (
+        UniqueConstraint("analysis_run_id", "normalized_word", name="uq_vocabulary_observations_run_word"),
+        CheckConstraint("length(trim(normalized_word)) > 0", name="ck_vocabulary_observations_word_not_blank"),
+        Index("ix_vocabulary_observations_user_word_observed_at", "user_id", "normalized_word", "observed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    vocabulary_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("vocabulary_items.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    analysis_run_id: Mapped[str] = mapped_column(ForeignKey("analysis_runs.id"), nullable=False, index=True)
+    normalized_word: Mapped[str] = mapped_column(String(200), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="challenge_target_exact_match")
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
 
 class DictionaryEntry(Base):

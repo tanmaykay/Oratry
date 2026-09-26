@@ -1,5 +1,7 @@
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "/v1").replace(/\/$/, "");
 const sessionStorageKey = "oratry.session";
+const requestTimeoutMs = 15_000;
+const directUploadTimeoutMs = 60_000;
 
 export type ApiUser = { id: string; email: string; preferences: Record<string, unknown>; emailVerifiedAt: string | null; createdAt: string };
 export type ChallengeAssignment = {
@@ -11,17 +13,18 @@ export type ChallengeAssignment = {
 export type BaselineResponse = { status: "not_started" | "in_progress" | "completed"; assignments: ChallengeAssignment[]; currentAssignment: ChallengeAssignment | null };
 export type MeResponse = ApiUser & { onboardingState: BaselineResponse["status"]; currentAssignment: ChallengeAssignment | null };
 export type AttemptSummary = { id: string; status: "uploading" | "queued" | "analyzing" | "analysis_failed" | string; assignmentId: string; createdAt: string };
-export type HomeResponse = { onboardingState: BaselineResponse["status"]; currentAssignment: ChallengeAssignment | null; inProgressAttempt: AttemptSummary | null; coachingFocus: null; recentProgress: { completedAttemptCount: number } };
+export type HomeResponse = { onboardingState: BaselineResponse["status"]; currentAssignment: ChallengeAssignment | null; inProgressAttempt: AttemptSummary | null; coachingFocus: { attemptId: string; primaryWeakness: { dimension: string | null; observation: string | null }; recommendation: { action: string | null; successCriterion: string | null } } | null; recentProgress: { completedAttemptCount: number } };
 export type Session = { accessToken: string; tokenType: "bearer" };
 export type AuthResponse = { user: ApiUser; session: Session };
 export type SignUpResponse = { user: ApiUser; activationRequired: true; delivery: "email" | string };
 export type DevelopmentOutboxResponse = { messages: { recipient: string; activationUrl: string }[] };
+export type AuthProvidersResponse = { google: boolean };
 export type StoredSession = AuthResponse;
 export type UploadInstruction = { method: "PUT"; url: string; headers: Record<string, string>; objectKey: string; expiresAt: string };
 export type UploadAttempt = { id: string; status: "uploading" | "queued" | string; assignmentId: string; createdAt: string; upload: UploadInstruction };
 export type UploadCompleteResponse = { id: string; status: "queued" | string; queue: { durable: boolean; delivery: string } };
-export type AttemptResponse = { id: string; status: string; assignmentId: string; challenge: ChallengeAssignment["challenge"] };
-export type ProgressAttempt = { id: string; status: string; assignmentId: string; createdAt: string; challenge: ChallengeAssignment["challenge"] };
+export type AttemptResponse = { id: string; status: string; assignmentId: string; failureCode?: string | null; challenge: ChallengeAssignment["challenge"] };
+export type ProgressAttempt = { id: string; status: string; assignmentId: string; createdAt: string; failureCode?: string | null; challenge: ChallengeAssignment["challenge"] };
 export type ProgressResponse = { attempts: ProgressAttempt[] };
 export type PlaybackResponse = { url: string; expiresAt: string; contentType: string };
 export type ComparisonEvidence = { attemptId: string; ordinal: number; completedAt: string; overallScore: number | null; metrics: Array<{ name: string; value: unknown; unit?: string }> };
@@ -33,7 +36,7 @@ export type AnalysisResultResponse = {
   transcript: { text: string; segments: { text: string; start_time: number | null; end_time: number | null; words: TranscriptWord[] }[]; confidence: number | null };
   objectiveMetrics: { items: Array<{ name: string; value: unknown; unit?: string; source?: string; measurement_kind?: string; reliability?: string; note?: string }> };
   evaluation: { result: { dimensions: Record<string, { score: number; observation: string; interpretation: string; evidence: unknown[] }>; primary_weakness: { dimension: string; observation: string; explanation: string }; recommendation: { action: string; success_criterion: string }; next_exercise: { title: string; instructions: string; duration_seconds: number }; limitations: string[] }; provenance: { provider: string; model: string } };
-  scorecard: { overall?: number; dimensions?: Record<string, { score: number | null; rule?: string }> };
+  scorecard: { overall?: number; dimensions?: Record<string, { score: number | null; rule?: string; input?: Record<string, unknown> }> };
   coachingRecommendation: { primaryWeakness: { dimension: string; observation: string; explanation: string }; recommendation: { action: string; success_criterion: string }; nextExercise: { title: string; instructions: string; duration_seconds: number } };
 };
 export type SkillState = { skill: string; estimatedLevel: number; confidence: number; modelVersion: string };
@@ -41,7 +44,9 @@ export type SkillsResponse = { skills: SkillState[] };
 export type DictionaryMeaning = { partOfSpeech?: string | null; definitions?: string[]; examples?: string[]; synonyms?: string[]; antonyms?: string[] };
 export type DictionaryPayload = { term?: string; phonetic?: string | null; meanings?: DictionaryMeaning[]; examples?: string[]; synonyms?: string[]; antonyms?: string[] };
 export type DictionaryEntry = { language: string; term: string; payload: DictionaryPayload; source: string; fetchedAt: string; expiresAt: string | null };
-export type VocabularyItem = { id: string; word: string; practiceStatus: "new" | "learning" | "practicing" | "mastered" | string; dictionary: DictionaryEntry | null };
+// `practiceEvidence` is optional while a web deployment rolls forward ahead
+// of an already-running API process. Missing evidence means no known matches.
+export type VocabularyItem = { id: string; word: string; practiceStatus: "new" | "learning" | "practicing" | "mastered" | string; dictionary: DictionaryEntry | null; practiceEvidence?: { exactTargetUseCount: number; lastObservedAt: string | null } };
 export type VocabularyResponse = { items: VocabularyItem[] };
 export type DictionaryLookupResponse = { term: string; dictionary: DictionaryEntry | null };
 
@@ -55,9 +60,14 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   headers.set("Accept", "application/json");
   if (options.body) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), requestTimeoutMs);
   let response: Response;
-  try { response = await fetch(url(path), { ...options, headers }); }
-  catch { throw new ApiError(0, "network_error", "We couldn't reach Oratry. Check your connection and try again."); }
+  try { response = await fetch(url(path), { ...options, headers, signal: controller.signal }); }
+  catch (cause) {
+    if (cause instanceof DOMException && cause.name === "AbortError") throw new ApiError(0, "request_timeout", "Oratry took too long to respond. Please try again.");
+    throw new ApiError(0, "network_error", "We couldn't reach Oratry. Check your connection and try again.");
+  } finally { globalThis.clearTimeout(timeout); }
   if (response.ok) return response.json() as Promise<T>;
   const body = await response.json().catch(() => null) as { code?: string; message?: string } | null;
   throw new ApiError(response.status, body?.code ?? "request_failed", body?.message ?? "Something went wrong. Please try again.");
@@ -77,6 +87,12 @@ export const api = {
   activate: (token: string) => request<AuthResponse>(`/auth/activate?token=${encodeURIComponent(token)}`),
   resendActivation: (email: string) => request<{ accepted: true }>("/auth/resend-activation", { method: "POST", body: JSON.stringify({ email }) }),
   developmentOutbox: () => request<DevelopmentOutboxResponse>("/auth/development-outbox"),
+  authProviders: () => request<AuthProvidersResponse>("/auth/providers"),
+  googleStartUrl: (acceptedTerms: boolean) => {
+    const origin = (process.env.NEXT_PUBLIC_API_ORIGIN ?? (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+    return `${origin}/v1/auth/google/start?accepted_terms=${acceptedTerms ? "true" : "false"}`;
+  },
+  completeGoogleLogin: (code: string) => request<AuthResponse>("/auth/google/complete", { method: "POST", body: JSON.stringify({ code }) }),
   me: (token: string) => request<MeResponse>("/me", {}, token),
   updatePreferences: (token: string, preferences: Record<string, unknown>) => request<ApiUser>("/me", { method: "PATCH", body: JSON.stringify({ preferences }) }, token),
   startBaseline: (token: string) => request<BaselineResponse>("/baseline/start", { method: "POST" }, token),
@@ -85,9 +101,14 @@ export const api = {
   currentAssignment: (token: string) => request<ChallengeAssignment>("/assignments/current", {}, token),
   createAttempt: (token: string, assignmentId: string, contentType: string, checksumSha256: string, retryOfAttemptId?: string) => request<UploadAttempt>(`/assignments/${assignmentId}/attempts`, { method: "POST", body: JSON.stringify({ contentType, checksumSha256, retryOfAttemptId }) }, token),
   uploadBlob: async (instruction: UploadInstruction, blob: Blob): Promise<void> => {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), directUploadTimeoutMs);
     let response: Response;
-    try { response = await fetch(instruction.url, { method: instruction.method, headers: instruction.headers, body: blob }); }
-    catch { throw new ApiError(0, "upload_network_error", "Your recording could not be uploaded. Check your connection and try again."); }
+    try { response = await fetch(instruction.url, { method: instruction.method, headers: instruction.headers, body: blob, signal: controller.signal }); }
+    catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") throw new ApiError(0, "upload_timeout", "Upload took longer than one minute. Check your connection and R2 CORS settings, then retry this recording.");
+      throw new ApiError(0, "upload_network_error", "Your recording could not be uploaded. Check your connection and try again.");
+    } finally { globalThis.clearTimeout(timeout); }
     if (!response.ok) throw new ApiError(response.status, "upload_failed", "Your recording could not be uploaded. Try again before recording a new response.");
   },
   completeUpload: (token: string, attempt: UploadAttempt, durationSeconds: number, contentType: string, byteSize: number) => request<UploadCompleteResponse>(`/attempts/${attempt.id}/upload-complete`, { method: "POST", body: JSON.stringify({ objectKey: attempt.upload.objectKey, durationSeconds, contentType, byteSize }) }, token),
@@ -95,6 +116,7 @@ export const api = {
   result: (token: string, attemptId: string) => request<AnalysisResultResponse>(`/attempts/${attemptId}/result`, {}, token),
   playback: (token: string, attemptId: string) => request<PlaybackResponse>(`/attempts/${attemptId}/recording-playback`, {}, token),
   comparison: (token: string, attemptId: string) => request<ComparisonResponse>(`/attempts/${attemptId}/comparison`, {}, token),
+  hideReview: async (token: string, attemptId: string): Promise<void> => { await request<unknown>(`/attempts/${attemptId}/review`, { method: "DELETE" }, token); },
   progress: (token: string) => request<ProgressResponse>("/progress", {}, token),
   skills: (token: string) => request<SkillsResponse>("/progress/skills", {}, token),
   vocabulary: (token: string) => request<VocabularyResponse>("/vocabulary", {}, token),

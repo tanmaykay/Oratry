@@ -156,7 +156,13 @@ class DeepgramPrerecordedSpeechToTextProvider:
         self._opener = opener
 
     def transcribe(self, audio_path: Path, *, language_hint: str | None = None) -> Transcript:
-        query: dict[str, str] = {"model": self._model, "smart_format": "true", "punctuate": "true", "utterances": "true"}
+        # Deepgram removes “um” and “uh” by default to make a conventional
+        # transcript easier to read. Oratry's learning contract needs those
+        # lexical events as timestamped evidence, so opt in explicitly.
+        query: dict[str, str] = {
+            "model": self._model, "smart_format": "true", "punctuate": "true",
+            "utterances": "true", "filler_words": "true",
+        }
         if language_hint:
             query["language"] = language_hint
         content_type = mimetypes.guess_type(audio_path.name)[0] or "application/octet-stream"

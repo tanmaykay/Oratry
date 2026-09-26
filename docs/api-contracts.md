@@ -16,11 +16,18 @@ Target writes accept an `Idempotency-Key` header and return the original success
 | --- | --- | --- |
 | `POST /v1/auth/sign-up` | email, password, acceptedTerms | unverified user and activation-delivery acknowledgement |
 | `POST /v1/auth/sign-in` | email, password | user and session |
+| `GET /v1/auth/providers` | none | enabled public sign-in methods |
+| `GET /v1/auth/google/start` | optional acceptedTerms query | browser redirect to Google with PKCE/state |
+| `GET /v1/auth/google/callback` | provider callback | browser redirect to web app with one-time handoff code |
+| `POST /v1/auth/google/complete` | one-time handoff code | user and session |
 | `POST /v1/auth/sign-out` | none | `204` |
 | `GET /v1/me` | none | profile, onboarding state, current assignment summary |
 | `PATCH /v1/me` | supported profile/preferences fields | updated profile |
 
 Authentication implementation (hosted identity provider or first-party credentials) is deliberately replaceable; API behavior is the contract.
+
+Google callback redirects never contain an Oratry session token. The opaque
+handoff code expires in five minutes by default and may be consumed once.
 
 ## Baseline, home, and curriculum
 

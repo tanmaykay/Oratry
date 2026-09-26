@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import Base, get_db
 from app.main import app, get_object_storage
-from app.models import Assignment, Attempt
+from app.models import AnalysisResult, AnalysisRun, Assignment, Attempt
 from app.personalization.baseline_policy import baseline_assignments
 from app.services import CurriculumService
 from app.storage import ObjectMetadata, UploadInstruction
@@ -128,6 +128,39 @@ def test_baseline_and_home_are_scoped_to_authenticated_user(tmp_path):
         app.dependency_overrides.clear()
 
 
+def test_home_exposes_only_visible_latest_coaching_focus(tmp_path):
+    client, local = _client(tmp_path)
+    try:
+        with client:
+            headers = _headers(client, "coaching-focus@example.com")
+            assignment_id = client.post("/v1/baseline/start", headers=headers).json()["assignments"][0]["assignmentId"]
+            with local() as db:
+                assignment = db.get(Assignment, assignment_id)
+                attempt = Attempt(user_id=assignment.user_id, assignment_id=assignment.id, status="completed", comparison_group_id="focus-group")
+                db.add(attempt); db.flush()
+                run = AnalysisRun(attempt_id=attempt.id, version=1, status="completed", current_stage="completed")
+                db.add(run); db.flush()
+                db.add(AnalysisResult(analysis_run_id=run.id, result_type="feedback", payload={
+                    "primaryWeakness": {"dimension": "clarity", "observation": "The main point arrived late."},
+                    "recommendation": {"action": "Lead with the decision.", "success_criterion": "State it first."},
+                }))
+                attempt_id = attempt.id
+                db.commit()
+            home = client.get("/v1/home", headers=headers).json()
+            assert home["recentProgress"]["completedAttemptCount"] == 1
+            assert home["coachingFocus"] == {
+                "attemptId": attempt_id,
+                "primaryWeakness": {"dimension": "clarity", "observation": "The main point arrived late."},
+                "recommendation": {"action": "Lead with the decision.", "successCriterion": "State it first."},
+            }
+            assert client.delete(f"/v1/attempts/{attempt_id}/review", headers=headers).status_code == 204
+            hidden_home = client.get("/v1/home", headers=headers).json()
+            assert hidden_home["recentProgress"]["completedAttemptCount"] == 0
+            assert hidden_home["coachingFocus"] is None
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_baseline_attempts_must_follow_the_persisted_order(tmp_path):
     client, local = _client(tmp_path)
     try:
@@ -186,6 +219,16 @@ class _RaceRecoverySession:
 
     def get(self, _model, _identifier):
         return object()
+
+    class _Savepoint:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _type, _value, _traceback):
+            return False
+
+    def begin_nested(self):
+        return self._Savepoint()
 
     def add(self, _item):
         pass

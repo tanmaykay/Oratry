@@ -11,6 +11,8 @@ import os
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -71,7 +73,8 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
         "alembic_version", "analysis_results", "analysis_runs", "attempts",
         "challenge_assignments", "challenges", "recordings", "skill_evidence",
         "skill_states", "users", "vocabulary_items", "email_verification_challenges",
-        "dictionary_entries", "analysis_jobs",
+        "dictionary_entries", "analysis_jobs", "vocabulary_observations",
+        "external_identities", "oauth_login_codes",
     }
     assert set(inspector.get_table_names(schema="public")) == expected_tables
 
@@ -151,6 +154,40 @@ def test_active_alembic_chain_creates_expected_postgresql_schema(migrated_postgr
     assert ("dictionary_entry_id", "dictionary_entries") in {
         (foreign_key["constrained_columns"][0], foreign_key["referred_table"])
         for foreign_key in vocabulary_foreign_keys
+    }
+
+    observation_columns = {column["name"]: column for column in inspector.get_columns("vocabulary_observations")}
+    assert {"user_id", "vocabulary_item_id", "analysis_run_id", "normalized_word", "source", "observed_at"} <= observation_columns.keys()
+    assert observation_columns["observed_at"]["type"].timezone is True
+    observation_foreign_keys = inspector.get_foreign_keys("vocabulary_observations")
+    assert {(foreign_key["constrained_columns"][0], foreign_key["referred_table"]) for foreign_key in observation_foreign_keys} == {
+        ("user_id", "users"), ("vocabulary_item_id", "vocabulary_items"), ("analysis_run_id", "analysis_runs"),
+    }
+    vocabulary_observation_fk = next(
+        foreign_key for foreign_key in observation_foreign_keys
+        if foreign_key["constrained_columns"] == ["vocabulary_item_id"]
+    )
+    assert vocabulary_observation_fk["options"].get("ondelete") == "SET NULL"
+    observation_indexes = {index["name"]: index for index in inspector.get_indexes("vocabulary_observations")}
+    assert observation_indexes["ix_vocabulary_observations_user_word_observed_at"]["column_names"] == ["user_id", "normalized_word", "observed_at"]
+    assert ("analysis_run_id", "normalized_word") in {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("vocabulary_observations")
+    }
+
+    external_identity_columns = {column["name"]: column for column in inspector.get_columns("external_identities")}
+    assert {"user_id", "provider", "subject", "created_at"} <= external_identity_columns.keys()
+    assert external_identity_columns["created_at"]["type"].timezone is True
+    assert ("provider", "subject") in {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("external_identities")
+    }
+    oauth_code_columns = {column["name"]: column for column in inspector.get_columns("oauth_login_codes")}
+    assert {"user_id", "code_digest", "expires_at", "consumed_at", "created_at"} <= oauth_code_columns.keys()
+    assert all(oauth_code_columns[name]["type"].timezone is True for name in ("expires_at", "consumed_at", "created_at"))
+    assert ("code_digest",) in {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("oauth_login_codes")
     }
 
     analysis_job_columns = {column["name"]: column for column in inspector.get_columns("analysis_jobs")}
@@ -353,6 +390,24 @@ def test_json_timestamps_retention_and_uniqueness_behave_on_postgresql(migrated_
                             'r2', 'private/duplicate.webm', 'audio/webm', 1, repeat('b', 64), 'not_scheduled', :created_at)
                 """), {"created_at": created_at})
 
+        connection.execute(text("""
+            INSERT INTO analysis_runs (id, attempt_id, version, status, current_stage, updated_at)
+            VALUES ('00000000-0000-0000-0000-000000000020', '00000000-0000-0000-0000-000000000004',
+                    1, 'completed', 'completed', :created_at)
+        """), {"created_at": created_at})
+        connection.execute(text("""
+            INSERT INTO vocabulary_observations
+                (id, user_id, vocabulary_item_id, analysis_run_id, normalized_word, source, observed_at)
+            VALUES ('00000000-0000-0000-0000-000000000021', '00000000-0000-0000-0000-000000000001',
+                    '00000000-0000-0000-0000-000000000018', '00000000-0000-0000-0000-000000000020',
+                    'articulate', 'challenge_target_exact_match', :created_at)
+        """), {"created_at": created_at})
+        connection.execute(text("DELETE FROM vocabulary_items WHERE id = '00000000-0000-0000-0000-000000000018'"))
+        assert connection.execute(text("""
+            SELECT vocabulary_item_id FROM vocabulary_observations
+            WHERE id = '00000000-0000-0000-0000-000000000021'
+        """)).scalar_one() is None
+
 
 def test_postgresql_claim_and_lease_fence_allow_only_the_owner(migrated_postgres_database) -> None:
     """Exercise SKIP LOCKED claim and conditional renewal on real PostgreSQL."""
@@ -374,3 +429,29 @@ def test_postgresql_claim_and_lease_fence_allow_only_the_owner(migrated_postgres
         first.commit()
         assert not renew_lease(second, job_id, "other-owner", lease_seconds=60)
         second.rollback()
+
+
+def test_postgresql_concurrent_claim_allows_exactly_one_worker(migrated_postgres_database) -> None:
+    """Two isolated real sessions race for a single SKIP LOCKED-ready job."""
+    Local = sessionmaker(bind=migrated_postgres_database, autoflush=False)
+    with Local() as setup:
+        user = User(email="claim-race@example.test", password_hash="hash", accepted_terms=True)
+        challenge = Challenge(prompt="Race", preparation_guidance="Guide", target_skills=[], difficulty=1, target_duration_seconds=60)
+        setup.add_all([user, challenge]); setup.flush()
+        assignment = Assignment(user_id=user.id, challenge_id=challenge.id, reason="claim-race")
+        setup.add(assignment); setup.flush()
+        attempt = Attempt(user_id=user.id, assignment_id=assignment.id, comparison_group_id="claim-race-group")
+        setup.add(attempt); setup.flush(); job = enqueue_analysis(setup, attempt.id)
+        setup.commit(); job_id = job.id
+
+    barrier = Barrier(2)
+    def claim(owner: str) -> str | None:
+        with Local() as db:
+            barrier.wait(timeout=10)
+            job = claim_next_job(db, owner)
+            return job.id if job else None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(claim, ("race-worker-a", "race-worker-b")))
+    assert outcomes.count(job_id) == 1
+    assert outcomes.count(None) == 1

@@ -12,7 +12,7 @@ def valid_payload(input_):
     quote = input_.transcript[:12]
     evidence = [{"source": "transcript", "quote": quote, "start_char": 0, "end_char": len(quote)}]
     dimensions = {name: {"score": 70, "confidence": .8, "observation": "The response contains cited text.", "interpretation": "This is relevant evidence.", "evidence": copy.deepcopy(evidence)} for name in DIMENSIONS}
-    return {"schema_version": "1.0.0", "evaluation_version": "1.0.0", "rubric_version": "1.0.0", "prompt_version": "1.0.0", "overall_score": calculate_overall(dimensions), "overall_confidence": .8, "dimensions": dimensions,
+    return {"schema_version": "1.0.0", "evaluation_version": "1.2.0", "rubric_version": "1.2.0", "prompt_version": "1.2.0", "overall_score": calculate_overall(dimensions), "overall_confidence": .8, "dimensions": dimensions,
         "primary_weakness": {"dimension": "structure", "observation": "The response contains cited text.", "explanation": "A clearer sequence would help.", "evidence": copy.deepcopy(evidence)},
         "recommendation": {"action": "State a position then two reasons.", "success_criterion": "Use one position and two reasons."}, "next_exercise": {"title": "Two reasons", "instructions": "State a position and two reasons.", "duration_seconds": 60}, "limitations": []}
 

@@ -37,8 +37,23 @@ class TranscriptAnalysisTests(unittest.TestCase):
         findings = {item.name: item for item in result if not hasattr(item, "unit")}
         self.assertEqual(metrics["word_count"].value, 4)
         self.assertEqual(metrics["filler_count"].value, 1)
+        self.assertAlmostEqual(metrics["transcription_confidence_mean"].value, .9575)
+        self.assertEqual(metrics["low_confidence_word_count"].value, 0)
         self.assertEqual(findings["immediate_repetitions"].value, ["clear"])
         self.assertEqual(findings["target_vocabulary_used"].value, ["language"])
+
+    def test_timestamp_gaps_produce_pause_metrics_without_claiming_acoustic_silence(self) -> None:
+        transcript = Transcript(
+            "first second", "en", (TranscriptSegment("first second", 0, 3.0, (
+                WordTimestamp("first", "first", 0, .4, .95),
+                WordTimestamp("second", "second", 2.2, 3.0, .95),
+            )),), "example",
+        )
+        result = analyze_transcript(transcript)
+        metrics = {item.name: item for item in result if hasattr(item, "unit")}
+        self.assertEqual(metrics["pause_count"].value, 1)
+        self.assertEqual(metrics["pause_seconds"].value, 1.8)
+        self.assertEqual(metrics["long_pause_count"].value, 1)
 
 
 class AudioAnalysisTests(unittest.TestCase):

@@ -1,27 +1,44 @@
 import logging
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from uuid import UUID
-from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core import DomainError, configure_logging, create_token, decode_token, domain_error_handler, http_error_handler, password_hash, settings
 from app.db import get_db
-from app.models import AnalysisJob, AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, DictionaryEntry, Recording, SkillState, User, VocabularyItem
-from app.schemas import ActivationResend, ChallengeCreate, CreateAttempt, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate, VocabularyUpdate
+from app.models import AnalysisJob, AnalysisResult, AnalysisRun, Assignment, Attempt, Challenge, DictionaryEntry, ExternalIdentity, OAuthLoginCode, Recording, SkillState, User, VocabularyItem, VocabularyObservation
+from app.schemas import ActivationResend, ChallengeCreate, CreateAttempt, OAuthCodeExchange, Preferences, SignIn, SignUp, UploadComplete, VocabularyCreate, VocabularyUpdate
 from app.services import ActivationService, CurriculumService, DictionaryService, owned_attempt
 from app.analysis_worker import ANALYSIS_STAGE, ANALYSIS_STAGE_VERSION, enqueue_analysis
 from app.email import DevelopmentOutboxEmailProvider, DisabledEmailProvider, EmailDeliveryError, EmailProvider, ResendEmailProvider
 from app.dictionary import DatamuseDictionaryProvider, DictionaryProvider, DisabledDictionaryProvider, FreeDictionaryApiProvider, ResilientDictionaryProvider
 from app.storage import ObjectStorageProvider, R2ObjectStorageProvider
+from app.identity import (ExternalProfile, GoogleIdentityProvider, IdentityProviderError,
+                          digest_code, new_browser_state, new_handoff_code,
+                          read_state_cookie, state_cookie)
 
 configure_logging(); log=logging.getLogger("oratry.api")
 app=FastAPI(title="Oratry API",version="1.0")
 app.add_exception_handler(DomainError,domain_error_handler); from fastapi import HTTPException; app.add_exception_handler(HTTPException,http_error_handler)
 bearer=HTTPBearer()
 SUPPORTED_AUDIO_CONTENT_TYPES = {"audio/webm", "audio/mpeg", "audio/wav", "audio/mp4"}
+GOOGLE_STATE_COOKIE = "oratry_google_oauth"
+
+
+@app.get("/health/live", include_in_schema=False)
+def live_health():
+    return {"status": "ok", "component": "api"}
+
+
+@app.get("/health/ready", include_in_schema=False)
+def ready_health(db: Session = Depends(get_db)):
+    db.execute(select(1))
+    return {"status": "ok", "component": "api", "database": "reachable"}
 
 
 @lru_cache
@@ -37,6 +54,48 @@ def get_email_provider() -> EmailProvider:
     if provider == "disabled":
         return DisabledEmailProvider()
     raise DomainError("email_not_configured", "Account activation email is not configured", 503)
+
+
+@lru_cache
+def get_google_identity_provider() -> GoogleIdentityProvider:
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        raise DomainError("google_sign_in_unavailable", "Google sign-in is not configured", 503)
+    return GoogleIdentityProvider(client_id=settings.google_oauth_client_id,
+                                  client_secret=settings.google_oauth_client_secret,
+                                  redirect_uri=settings.google_oauth_redirect_uri)
+
+
+def _oauth_expired(value: datetime) -> bool:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value <= datetime.now(timezone.utc)
+
+
+def _oauth_callback_url(*, code: str | None = None, error: str | None = None) -> str:
+    from urllib.parse import urlencode
+    query = urlencode({key: value for key, value in {"code": code, "error": error}.items() if value})
+    return f"{settings.web_app_url.rstrip('/')}/oauth/callback?{query}"
+
+
+def _resolve_external_user(db: Session, profile: ExternalProfile, *, accepted_terms: bool) -> User:
+    identity = db.scalar(select(ExternalIdentity).where(
+        ExternalIdentity.provider == profile.provider, ExternalIdentity.subject == profile.subject,
+    ))
+    if identity:
+        return db.get(User, identity.user_id)
+    user = db.scalar(select(User).where(User.email == profile.email))
+    if user is None:
+        if not accepted_terms:
+            raise DomainError("terms_required", "Accept the terms before creating an account", 400)
+        user = User(email=profile.email, password_hash=password_hash.hash(secrets.token_urlsafe(48)),
+                    accepted_terms=True, email_verified_at=datetime.now(timezone.utc))
+        db.add(user); db.flush()
+    elif user.email_verified_at is None:
+        # Google has verified control of the same email address.
+        user.email_verified_at = datetime.now(timezone.utc)
+    db.add(ExternalIdentity(user_id=user.id, provider=profile.provider, subject=profile.subject))
+    db.flush()
+    return user
 
 
 def activation_service(db: Session, provider: EmailProvider) -> ActivationService:
@@ -131,7 +190,25 @@ def assignment_view(assignment, db):
     return {"assignmentId":assignment.id,"status":assignment.status,"reason":assignment.reason,
             "challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
 def attempt_view(attempt,db):
-    assignment=db.get(Assignment,attempt.assignment_id); return {"id":attempt.id,"status":attempt.status,"assignmentId":attempt.assignment_id,"createdAt":attempt.created_at,"challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
+    assignment=db.get(Assignment,attempt.assignment_id)
+    run = db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id == attempt.id).order_by(AnalysisRun.version.desc()))
+    return {"id":attempt.id,"status":attempt.status,"assignmentId":attempt.assignment_id,"createdAt":attempt.created_at,
+            "failureCode": run.failure_code if attempt.status == "analysis_failed" and run else None,
+            "challenge":challenge_view(db.get(Challenge,assignment.challenge_id))}
+
+def result_payload(db: Session, run: AnalysisRun | None, result_type: str) -> dict | None:
+    if run is None:
+        return None
+    result = db.scalar(select(AnalysisResult).where(
+        AnalysisResult.analysis_run_id == run.id, AnalysisResult.result_type == result_type,
+    ))
+    return result.payload if result and isinstance(result.payload, dict) else None
+
+def reviewable_attempt(db: Session, user_id: str, attempt_id: str) -> Attempt:
+    attempt = owned_attempt(db, user_id, attempt_id)
+    if attempt.hidden_at is not None:
+        raise DomainError("not_found", "Resource not found", 404)
+    return attempt
 @app.post("/v1/auth/sign-up",status_code=201)
 @app.post("/auth/signup",status_code=201,include_in_schema=False)
 def signup(body:SignUp,db:Session=Depends(get_db),provider:EmailProvider=Depends(get_email_provider)):
@@ -155,6 +232,67 @@ def login(body:SignIn,db:Session=Depends(get_db)):
     if user.email_verified_at is None:
         raise DomainError("email_verification_required", "Activate your account from the link sent to your email", 403)
     return {"user":user_view(user),"session":{"accessToken":create_token(UUID(user.id)),"tokenType":"bearer"}}
+
+
+@app.get("/v1/auth/providers")
+def auth_providers():
+    """Public capability flag; never expose client secrets or provider errors."""
+    return {"google": bool(settings.google_oauth_client_id and settings.google_oauth_client_secret)}
+
+
+@app.get("/v1/auth/google/start", include_in_schema=False)
+def google_start(accepted_terms: bool = False, provider: GoogleIdentityProvider = Depends(get_google_identity_provider)):
+    state, verifier, challenge = new_browser_state(accepted_terms=accepted_terms)
+    response = RedirectResponse(provider.authorization_url(state=state, code_challenge=challenge), status_code=302)
+    response.set_cookie(
+        GOOGLE_STATE_COOKIE,
+        state_cookie(state=state, verifier=verifier, accepted_terms=accepted_terms,
+                     secret=settings.jwt_secret, expires_seconds=10 * 60),
+        max_age=10 * 60, httponly=True, secure=settings.app_environment.casefold() not in {"local", "test"},
+        samesite="lax", path="/v1/auth/google",
+    )
+    return response
+
+
+@app.get("/v1/auth/google/callback", include_in_schema=False)
+def google_callback(request: Request, state: str | None = None, code: str | None = None,
+                    error: str | None = None, db: Session = Depends(get_db),
+                    provider: GoogleIdentityProvider = Depends(get_google_identity_provider)):
+    if error or not state or not code:
+        return RedirectResponse(_oauth_callback_url(error="google_sign_in_cancelled"), status_code=302)
+    state_data = read_state_cookie(request.cookies.get(GOOGLE_STATE_COOKIE), state=state, secret=settings.jwt_secret)
+    if state_data is None:
+        return RedirectResponse(_oauth_callback_url(error="google_sign_in_expired"), status_code=302)
+    verifier, accepted_terms = state_data
+    try:
+        profile = provider.exchange(code=code, code_verifier=verifier)
+        user = _resolve_external_user(db, profile, accepted_terms=accepted_terms)
+        handoff = new_handoff_code()
+        db.add(OAuthLoginCode(user_id=user.id, code_digest=digest_code(handoff),
+                              expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.oauth_handoff_minutes)))
+        db.commit()
+    except DomainError as exc:
+        db.rollback()
+        return RedirectResponse(_oauth_callback_url(error=exc.code), status_code=302)
+    except (IdentityProviderError, IntegrityError):
+        db.rollback()
+        return RedirectResponse(_oauth_callback_url(error="google_sign_in_failed"), status_code=302)
+    response = RedirectResponse(_oauth_callback_url(code=handoff), status_code=302)
+    response.delete_cookie(GOOGLE_STATE_COOKIE, path="/v1/auth/google")
+    return response
+
+
+@app.post("/v1/auth/google/complete")
+def google_complete(body: OAuthCodeExchange, db: Session = Depends(get_db)):
+    login_code = db.scalar(select(OAuthLoginCode).where(OAuthLoginCode.code_digest == digest_code(body.code)))
+    if login_code is None or login_code.consumed_at is not None or _oauth_expired(login_code.expires_at):
+        raise DomainError("google_sign_in_expired", "This Google sign-in link is invalid or expired", 400)
+    user = db.get(User, login_code.user_id)
+    if user is None:
+        raise DomainError("google_sign_in_expired", "This Google sign-in link is invalid or expired", 400)
+    login_code.consumed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"user": user_view(user), "session": {"accessToken": create_token(UUID(user.id)), "tokenType": "bearer"}}
 
 
 @app.get("/v1/auth/activate")
@@ -236,15 +374,30 @@ def home(user:User=Depends(current_user),db:Session=Depends(get_db)):
     baseline_status, _, _=curriculum.baseline_status(user.id)
     assignment=curriculum.current_assignment(user.id) if baseline_status != "not_started" else None
     in_progress=db.scalar(select(Attempt).where(
-        Attempt.user_id==user.id, Attempt.status.in_(("uploading","queued","analyzing","analysis_failed"))
+        Attempt.user_id==user.id, Attempt.status.in_(("uploading","queued","analyzing"))
     ).order_by(Attempt.created_at.desc()))
     completed_count=db.scalar(select(func.count(Attempt.id)).where(
-        Attempt.user_id==user.id, Attempt.status=="completed"
+        Attempt.user_id==user.id, Attempt.status=="completed", Attempt.hidden_at.is_(None)
     )) or 0
+    latest_attempt = db.scalar(select(Attempt).where(
+        Attempt.user_id == user.id, Attempt.status == "completed", Attempt.hidden_at.is_(None),
+    ).order_by(Attempt.completed_at.desc(), Attempt.created_at.desc()))
+    coaching_focus = None
+    if latest_attempt:
+        latest_run = db.scalar(select(AnalysisRun).where(
+            AnalysisRun.attempt_id == latest_attempt.id, AnalysisRun.status == "completed",
+        ).order_by(AnalysisRun.version.desc()))
+        feedback = result_payload(db, latest_run, "feedback")
+        if isinstance(feedback, dict):
+            primary, recommendation = feedback.get("primaryWeakness"), feedback.get("recommendation")
+            if isinstance(primary, dict) and isinstance(recommendation, dict):
+                coaching_focus = {"attemptId": latest_attempt.id,
+                    "primaryWeakness": {"dimension": primary.get("dimension"), "observation": primary.get("observation")},
+                    "recommendation": {"action": recommendation.get("action"), "successCriterion": recommendation.get("success_criterion")}}
     return {"onboardingState":baseline_status,
             "currentAssignment":assignment_view(assignment,db) if assignment else None,
             "inProgressAttempt":attempt_view(in_progress,db) if in_progress else None,
-            "coachingFocus":None,
+            "coachingFocus":coaching_focus,
             "recentProgress":{"completedAttemptCount":completed_count}}
 
 @app.get("/v1/challenges/recommended")
@@ -298,15 +451,22 @@ def create_attempt(assignment_id:str, body:CreateAttempt|None=Body(default=None)
             Attempt.status == "uploading", Attempt.retry_of_attempt_id.is_(None),
         ).order_by(Attempt.created_at.desc()))
         if attempt is not None:
-            if attempt.content_type and attempt.content_type != content_type:
-                raise DomainError("upload_media_type_locked", "This upload attempt was created for a different media type", 409)
-            if attempt.checksum != request.checksum_sha256:
-                raise DomainError("upload_checksum_locked", "This upload attempt was created for a different recording", 409)
-            instruction = _create_upload_instruction(
-                storage, object_key=_issued_object_key(user.id, attempt.id),
-                content_type=content_type, checksum_sha256=attempt.checksum,
-            )
-            return {**attempt_view(attempt,db),"upload":_upload_view(instruction)}
+            if attempt.content_type != content_type or attempt.checksum != request.checksum_sha256:
+                # A fresh browser recording is an explicit replacement of an
+                # unsealed upload. Do not strand the learner behind a hung R2
+                # request; confirmed/queued recordings are never replaced here.
+                try:
+                    storage.delete(_issued_object_key(user.id, attempt.id))
+                except Exception:
+                    log.info("superseded_upload_cleanup_failed provider=%s", storage.provider_name)
+                attempt.status = "abandoned"
+                db.flush()
+            else:
+                instruction = _create_upload_instruction(
+                    storage, object_key=_issued_object_key(user.id, attempt.id),
+                    content_type=content_type, checksum_sha256=attempt.checksum,
+                )
+                return {**attempt_view(attempt,db),"upload":_upload_view(instruction)}
     attempt=Attempt(user_id=user.id,assignment_id=assignment.id,content_type=content_type, checksum=request.checksum_sha256,
                     retry_of_attempt_id=request.retry_of_attempt_id)
     if request.retry_of_attempt_id:
@@ -399,7 +559,7 @@ def get_attempt(attempt_id:str,user:User=Depends(current_user),db:Session=Depend
 @app.get("/v1/attempts/{attempt_id}/result")
 @app.get("/sessions/{attempt_id}/feedback",include_in_schema=False)
 def result(attempt_id:str,user:User=Depends(current_user),db:Session=Depends(get_db)):
-    attempt=owned_attempt(db,user.id,attempt_id)
+    attempt=reviewable_attempt(db,user.id,attempt_id)
     if attempt.status!="completed": raise DomainError("analysis_not_complete","Analysis is not complete",409)
     run=db.scalar(select(AnalysisRun).where(AnalysisRun.attempt_id==attempt.id).order_by(AnalysisRun.version.desc())); data={row.result_type:row.payload for row in db.scalars(select(AnalysisResult).where(AnalysisResult.analysis_run_id==run.id))}
     return {"attemptId":attempt.id,"analysisVersion":run.version,"transcript":data["transcript"],"objectiveMetrics":data["metrics"],"evaluation":data["evaluation"],"scorecard":data["scorecard"],"coachingRecommendation":data["feedback"]}
@@ -429,7 +589,7 @@ def recording_playback(attempt_id: str, user: User = Depends(current_user), db: 
     Playback is deliberately unavailable after the retention worker deletes the
     object. The URL itself is never persisted or returned from a list endpoint.
     """
-    attempt = owned_attempt(db, user.id, attempt_id)
+    attempt = reviewable_attempt(db, user.id, attempt_id)
     recording = db.scalar(select(Recording).where(Recording.attempt_id == attempt.id))
     now = datetime.now(timezone.utc)
     deadline = recording.retention_deadline if recording else None
@@ -457,7 +617,7 @@ def recording_playback(attempt_id: str, user: User = Depends(current_user), db: 
 @app.get("/v1/attempts/{attempt_id}/comparison")
 def comparison(attempt_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Compare a completed retry with its source using persisted evidence only."""
-    selected = owned_attempt(db, user.id, attempt_id)
+    selected = reviewable_attempt(db, user.id, attempt_id)
     if selected.retry_of_attempt_id:
         original = owned_attempt(db, user.id, selected.retry_of_attempt_id)
         retry_attempt = selected
@@ -484,7 +644,15 @@ def retry(attempt_id:str,user:User=Depends(current_user),db:Session=Depends(get_
 
 @app.get("/v1/progress")
 @app.get("/progress",include_in_schema=False)
-def progress(user:User=Depends(current_user),db:Session=Depends(get_db)): return {"attempts":[attempt_view(a,db) for a in db.scalars(select(Attempt).where(Attempt.user_id==user.id).order_by(Attempt.created_at.desc()))]}
+def progress(user:User=Depends(current_user),db:Session=Depends(get_db)): return {"attempts":[attempt_view(a,db) for a in db.scalars(select(Attempt).where(Attempt.user_id==user.id, Attempt.hidden_at.is_(None)).order_by(Attempt.created_at.desc()))]}
+
+@app.delete("/v1/attempts/{attempt_id}/review", status_code=204)
+def hide_review(attempt_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    attempt = owned_attempt(db, user.id, attempt_id)
+    if attempt.status not in {"completed", "analysis_failed"}:
+        raise DomainError("review_not_available", "Only completed or failed analysis reviews can be hidden", 409)
+    attempt.hidden_at = datetime.now(timezone.utc)
+    db.commit()
 @app.get("/v1/progress/skills")
 @app.get("/progress/skills",include_in_schema=False)
 def skills(user:User=Depends(current_user),db:Session=Depends(get_db)): return {"skills":[{"skill":s.skill,"estimatedLevel":s.estimated_level,"confidence":s.confidence,"modelVersion":s.model_version} for s in db.scalars(select(SkillState).where(SkillState.user_id==user.id))]}
@@ -496,8 +664,12 @@ def dictionary_entry_view(entry: DictionaryEntry | None) -> dict | None:
 
 
 def vocabulary_view(item: VocabularyItem, db: Session) -> dict:
+    observation_count, last_observed_at = db.execute(select(
+        func.count(VocabularyObservation.id), func.max(VocabularyObservation.observed_at),
+    ).where(VocabularyObservation.vocabulary_item_id == item.id)).one()
     return {"id": item.id, "word": item.word, "practiceStatus": item.practice_status,
-            "dictionary": dictionary_entry_view(db.get(DictionaryEntry, item.dictionary_entry_id) if item.dictionary_entry_id else None)}
+            "dictionary": dictionary_entry_view(db.get(DictionaryEntry, item.dictionary_entry_id) if item.dictionary_entry_id else None),
+            "practiceEvidence": {"exactTargetUseCount": observation_count, "lastObservedAt": last_observed_at}}
 
 
 @app.get("/v1/dictionary/{term}")

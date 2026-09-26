@@ -25,5 +25,6 @@ Raw recordings are sensitive content. They require private storage, intentional 
 - The challenge is the central product experience: prepare independently, speak, receive one primary coaching insight, retry, then see an honest comparison.
 - Home prioritizes today's challenge and the learner's current focus over a broad dashboard.
 - Vocabulary is active retrieval practice, not a generic word list. Definitions and examples may help preparation, but progress is earned through deliberate and eventually natural spoken use.
+- The challenge catalog is curated and versioned. New modes may be planned in advance, but become selectable only after their preparation experience, rubric, and evaluation behavior are validated; see `docs/challenge-catalog.md`.
 - V1 does not make psychological claims from audio, provide a nervousness score, analyze sentiment or body language, build a research browser, or use AI to think on the learner's behalf.
 - Scores are secondary to actionable coaching. Objective measures, model-derived observations, and coaching judgment must remain distinguishable.
